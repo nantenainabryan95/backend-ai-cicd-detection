@@ -1,0 +1,41 @@
+# -----------------------------------------------------------------------------
+# Règles de sécurité personnalisées pour Semgrep, écrites à la main.
+# Avantage par rapport à "--config auto" : aucune connexion internet requise
+# pendant le scan, le comportement est stable et prévisible, et vous pouvez
+# en ajouter d'autres facilement, en suivant le même modèle.
+# -----------------------------------------------------------------------------
+
+rules:
+  - id: python-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: >
+      Utilisation dangereuse de subprocess avec shell=True : risque
+      d'injection de commande si une valeur provient d'une source non fiable.
+    patterns:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+
+  - id: python-eval-use
+    languages: [python]
+    severity: WARNING
+    message: "Utilisation de eval() : risque d'exécution de code arbitraire."
+    patterns:
+      - pattern: eval(...)
+
+  - id: python-pickle-load
+    languages: [python]
+    severity: WARNING
+    message: >
+      Désérialisation avec pickle : risque d'exécution de code arbitraire
+      si la source des données n'est pas fiable.
+    patterns:
+      - pattern-either:
+          - pattern: pickle.load(...)
+          - pattern: pickle.loads(...)
+
+  - id: python-debug-true-hardcoded
+    languages: [python]
+    severity: WARNING
+    message: "DEBUG activé en dur dans le code : à ne jamais laisser en production."
+    patterns:
+      - pattern: DEBUG = True
