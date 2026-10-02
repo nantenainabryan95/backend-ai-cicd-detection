@@ -68,7 +68,7 @@ def analyze_finding_with_gemini(finding_context: dict, api_key: str, model: str 
             # "nettoyer" du texte autour de la réponse.
             "generationConfig": {"response_mime_type": "application/json"},
         },
-        timeout=30,
+        timeout=60,
     )
     response.raise_for_status()  # déclenche une erreur si la clé est invalide, quota dépassé, etc.
 

@@ -14,9 +14,9 @@ class Settings(BaseSettings):
     # En Python, on déclare une variable de classe avec juste "nom: type".
     # Ici, chaque attribut correspond à une variable attendue dans le .env.
     database_url: str = "postgresql://vulnscan:vulnscan@localhost:5432/vulnscan"
-    llm_provider: str = "anthropic"
+    llm_provider: str = "groq"
     llm_api_key: str = ""
-    llm_model: str = "gemini-flash-latest"
+    llm_model: str = "llama-3.3-70b-versatile"
     jwt_secret: str = "change-me"
 
     # Cette classe interne dit à pydantic où aller chercher le fichier .env

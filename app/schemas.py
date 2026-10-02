@@ -54,5 +54,31 @@ class AIAnalysisOut(BaseModel):
     ai_reasoning: str
     ai_suggested_fix: str | None
     human_status: str
+    reviewed_by: int | None
 
     model_config = {"from_attributes": True}
+
+
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    # NOTE : en clair pour l'instant, sans hachage. Ce n'est PAS sécurisé
+    # tel quel : on corrigera ça à l'étape "authentification", où on
+    # utilisera une vraie bibliothèque de hachage (passlib/bcrypt) pour ne
+    # jamais stocker un mot de passe lisible en base.
+    password: str
+    role: str = "developer"
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    email: str
+    role: str
+
+    model_config = {"from_attributes": True}
+
+
+class AnalysisReview(BaseModel):
+    human_status: str  # "approuve" ou "rejete"
+    reviewed_by: int    # id de l'utilisateur qui valide
