@@ -1,7 +1,3 @@
-// Ces types décrivent la forme des données renvoyées par l'API Python.
-// Ils doivent rester alignés avec app/schemas.py côté backend : si vous
-// ajoutez un champ côté Python, ajoutez-le ici aussi.
-
 export interface Project {
   id: number;
   name: string;
@@ -34,4 +30,13 @@ export interface AIAnalysis {
   ai_suggested_fix: string | null;
   human_status: string;
   reviewed_by: number | null;
+}
+
+/**
+ * Données envoyées à FastAPI pour
+ * approuver ou rejeter une analyse IA.
+ */
+export interface AnalysisReview {
+  human_status: "approuve" | "rejete";
+  reviewed_by: number;
 }

@@ -1,65 +1,193 @@
-import type { Project, Finding, AIAnalysis } from "./types";
+import type {
+  Project,
+  Finding,
+  AIAnalysis,
+  AnalysisReview,
+} from "./types";
 
-// L'adresse de votre API. En développement, c'est toujours localhost:8000
-// (là où tourne uvicorn). Vite permet de la rendre configurable via un
-// fichier .env si besoin plus tard, mais une valeur fixe suffit pour l'instant.
+/**
+ * URL du backend FastAPI.
+ */
 const API_URL = "http://localhost:8000";
 
-// Petite fonction utilitaire : fait l'appel HTTP, vérifie que la réponse
-// est valide, et renvoie le JSON déjà typé. Toutes les fonctions ci-dessous
-// s'appuient dessus pour ne pas répéter la gestion d'erreur à chaque fois.
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+/**
+ * Fonction générique utilisée pour les appels HTTP.
+ */
+async function request<T>(
+  path: string,
+  options?: RequestInit
+): Promise<T> {
+  const response = await fetch(
+    `${API_URL}${path}`,
+    {
+      headers: {
+        "Content-Type": "application/json",
+      },
+      ...options,
+    }
+  );
 
   if (!response.ok) {
-    // On lit le corps de l'erreur pour avoir un message utile dans la console,
-    // plutôt qu'un simple "erreur 500" sans détail.
     const body = await response.text();
-    throw new Error(`Erreur API (${response.status}) sur ${path} : ${body}`);
+
+    throw new Error(
+      `Erreur API (${response.status}) sur ${path} : ${body}`
+    );
   }
 
   return response.json() as Promise<T>;
 }
 
 export const api = {
-  listProjects: () => request<Project[]>("/projects"),
+  /**
+   * ==================================================
+   * PROJETS
+   * ==================================================
+   */
 
-  createProject: (name: string, repository_url: string) =>
+  listProjects: () =>
+    request<Project[]>("/projects"),
+
+  createProject: (
+    name: string,
+    repository_url: string
+  ) =>
     request<Project>("/projects", {
       method: "POST",
-      body: JSON.stringify({ name, repository_url }),
+      body: JSON.stringify({
+        name,
+        repository_url,
+      }),
     }),
 
-  listFindings: (projectId: number) =>
-    request<Finding[]>(`/projects/${projectId}/findings`),
+  /**
+   * ==================================================
+   * FINDINGS
+   * ==================================================
+   */
 
-  scanTrivy: (projectId: number, targetPath: string) =>
-    request<Finding[]>(`/projects/${projectId}/scan/trivy`, {
-      method: "POST",
-      body: JSON.stringify({ target_path: targetPath }),
-    }),
+  listFindings: (
+    projectId: number
+  ) =>
+    request<Finding[]>(
+      `/projects/${projectId}/findings`
+    ),
 
-  scanSemgrep: (projectId: number, targetPath: string) =>
-    request<Finding[]>(`/projects/${projectId}/scan/semgrep`, {
-      method: "POST",
-      body: JSON.stringify({ target_path: targetPath }),
-    }),
+  /**
+   * ==================================================
+   * SCANNERS
+   * ==================================================
+   */
 
-  scanGitleaks: (projectId: number, targetPath: string) =>
-    request<Finding[]>(`/projects/${projectId}/scan/gitleaks`, {
-      method: "POST",
-      body: JSON.stringify({ target_path: targetPath }),
-    }),
+  scanTrivy: (
+    projectId: number,
+    targetPath: string
+  ) =>
+    request<Finding[]>(
+      `/projects/${projectId}/scan/trivy`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          target_path: targetPath,
+        }),
+      }
+    ),
 
-  scoreProject: (projectId: number) =>
-    request<Finding[]>(`/projects/${projectId}/score`, { method: "POST" }),
+  scanSemgrep: (
+    projectId: number,
+    targetPath: string
+  ) =>
+    request<Finding[]>(
+      `/projects/${projectId}/scan/semgrep`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          target_path: targetPath,
+        }),
+      }
+    ),
 
-  analyzeFinding: (findingId: number) =>
-    request<AIAnalysis>(`/findings/${findingId}/analyze`, { method: "POST" }),
+  scanGitleaks: (
+    projectId: number,
+    targetPath: string
+  ) =>
+    request<Finding[]>(
+      `/projects/${projectId}/scan/gitleaks`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          target_path: targetPath,
+        }),
+      }
+    ),
 
-  listAnalyses: (findingId: number) =>
-    request<AIAnalysis[]>(`/findings/${findingId}/analyses`),
+  /**
+   * ==================================================
+   * SCORING
+   * ==================================================
+   */
+
+  scoreProject: (
+    projectId: number
+  ) =>
+    request<Finding[]>(
+      `/projects/${projectId}/score`,
+      {
+        method: "POST",
+      }
+    ),
+
+  /**
+   * ==================================================
+   * ANALYSE IA
+   * ==================================================
+   */
+
+  analyzeFinding: (
+    findingId: number
+  ) =>
+    request<AIAnalysis>(
+      `/findings/${findingId}/analyze`,
+      {
+        method: "POST",
+      }
+    ),
+
+  /**
+   * Historique des analyses IA.
+   */
+  listAnalyses: (
+    findingId: number
+  ) =>
+    request<AIAnalysis[]>(
+      `/findings/${findingId}/analyses`
+    ),
+
+  /**
+   * ==================================================
+   * HUMAN-IN-THE-LOOP
+   * ==================================================
+   *
+   * Appelle :
+   *
+   * PATCH /analyses/{analysis_id}/review
+   *
+   * avec :
+   *
+   * {
+   *   "human_status": "approuve",
+   *   "reviewed_by": 1
+   * }
+   */
+  reviewAnalysis: (
+    analysisId: number,
+    review: AnalysisReview
+  ) =>
+    request<AIAnalysis>(
+      `/analyses/${analysisId}/review`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(review),
+      }
+    ),
 };
