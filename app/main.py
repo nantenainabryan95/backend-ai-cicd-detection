@@ -2,15 +2,24 @@
 # C'est le fichier qu'on lance pour démarrer le serveur.
 # FastAPI transforme les fonctions Python en routes HTTP grâce aux décorateurs
 # @app.get(), @app.post(), @app.patch(), etc.
+#
+# Correctifs de cette version (pipeline Jenkins) :
+#   1. _save_findings : un finding déjà connu est MIS À JOUR (pas dupliqué).
+#   2. ?build=N sur /findings et /score : on travaille sur UN build précis.
+#   3. quality-gate : filtre par build + seuils (critical / high).
+#   4. review_analysis : la décision humaine met à jour le statut du Finding.
 # -----------------------------------------------------------------------------
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 import requests
+import jwt
 
 from app.database import get_db
 from app import models, schemas
+from app.auth import hash_password, verify_password, create_access_token, decode_access_token
 
 from app.scanners.trivy import (
     run_trivy_scan,
@@ -51,18 +60,6 @@ app = FastAPI(
 # -----------------------------------------------------------------------------
 # CORS
 # -----------------------------------------------------------------------------
-#
-# Le frontend React/Vite fonctionne généralement sur :
-#
-#     http://localhost:5173
-#
-# tandis que FastAPI fonctionne sur :
-#
-#     http://localhost:8000
-#
-# Le navigateur considère ces deux adresses comme des origines différentes.
-# CORS permet donc au frontend de communiquer avec l'API.
-# -----------------------------------------------------------------------------
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,14 +74,75 @@ app.add_middleware(
 
 
 # -----------------------------------------------------------------------------
+# Authentification
+# -----------------------------------------------------------------------------
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> models.User:
+    """
+    Extrait l'utilisateur connecté à partir du jeton JWT. Toute route qui
+    ajoute "Depends(get_current_user)" devient protégée.
+    """
+    try:
+        user_id = decode_access_token(token)
+    except jwt.PyJWTError:
+        raise HTTPException(
+            status_code=401,
+            detail="Jeton invalide ou expiré. Reconnectez-vous.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    utilisateur = db.get(models.User, user_id)
+    if utilisateur is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Utilisateur introuvable.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return utilisateur
+
+
+@app.post("/auth/login", response_model=schemas.TokenOut)
+def login(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
+    """
+    Vérifie le nom d'utilisateur et le mot de passe, et renvoie un jeton
+    JWT valable 8 heures si tout est correct.
+    """
+    utilisateur = db.query(models.User).filter(models.User.username == form_data.username).first()
+
+    # Même message pour "utilisateur inconnu" et "mauvais mot de passe" :
+    # on ne révèle pas quels noms d'utilisateur existent.
+    if utilisateur is None or not verify_password(form_data.password, utilisateur.password_hash):
+        raise HTTPException(
+            status_code=401,
+            detail="Nom d'utilisateur ou mot de passe incorrect.",
+        )
+
+    token = create_access_token(utilisateur.id)
+    return schemas.TokenOut(access_token=token)
+
+
+@app.get("/auth/me", response_model=schemas.UserOut)
+def read_current_user(current_user: models.User = Depends(get_current_user)):
+    """Renvoie les infos de la personne actuellement connectée."""
+    return current_user
+
+
+# -----------------------------------------------------------------------------
 # Health check
 # -----------------------------------------------------------------------------
 
 @app.get("/health")
 def health_check():
-    """
-    Vérifie simplement que l'API fonctionne.
-    """
     return {
         "status": "ok",
         "service": "vulnscan-api",
@@ -117,10 +175,6 @@ def create_project(
     payload: schemas.ProjectCreate,
     db: Session = Depends(get_db),
 ):
-    """
-    Crée un nouveau projet.
-    """
-
     projet = models.Project(
         name=payload.name,
         repository_url=payload.repository_url,
@@ -140,10 +194,6 @@ def create_project(
 def list_projects(
     db: Session = Depends(get_db),
 ):
-    """
-    Retourne tous les projets.
-    """
-
     return db.query(models.Project).all()
 
 
@@ -155,12 +205,6 @@ def _get_project_or_error(
     db: Session,
     project_id: int,
 ) -> models.Project:
-    """
-    Recherche un projet par son ID.
-
-    Si le projet n'existe pas, retourne une erreur HTTP 404.
-    """
-
     projet = db.get(models.Project, project_id)
 
     if projet is None:
@@ -176,12 +220,6 @@ def _get_finding_or_error(
     db: Session,
     finding_id: int,
 ) -> models.Finding:
-    """
-    Recherche une vulnérabilité par son ID.
-
-    Si elle n'existe pas, retourne une erreur HTTP 404.
-    """
-
     finding = db.get(models.Finding, finding_id)
 
     if finding is None:
@@ -197,33 +235,101 @@ def _save_findings(
     db: Session,
     project_id: int,
     parsed_items: list[dict],
+    jenkins_build_number: int | None = None,
+    git_commit_sha: str | None = None,
 ) -> list[models.Finding]:
     """
-    Fonction commune aux scanners.
+    CORRECTIF 1 : dédoublonnage.
 
-    Transforme les dictionnaires retournés par les scanners
-    en objets Finding, les sauvegarde dans PostgreSQL,
-    puis retourne les findings créés.
+    Avant : chaque scan créait de NOUVELLES lignes, même pour une vulnérabilité
+    déjà connue. Une faille corrigée au build 5 restait "ouverte" à jamais
+    (ligne du build 1), et bloquait le Quality Gate.
+
+    Maintenant, un finding est identifié par :
+        (projet, scanner, titre, fichier, ligne)
+
+      - déjà connu  -> on met à jour "vu pour la dernière fois au build N" et
+                       on CONSERVE son statut (donc la décision humaine).
+      - nouveau     -> on le crée.
+      - était FIXED mais réapparaît -> on le rouvre (NEW).
+
+    Limite connue : si le code est décalé (la ligne change), le finding est
+    considéré comme nouveau.
     """
-
-    nouveaux_findings = []
+    resultat = []
 
     for item in parsed_items:
-
-        finding = models.Finding(
-            project_id=project_id,
-            **item,
+        existant = (
+            db.query(models.Finding)
+            .filter(
+                models.Finding.project_id == project_id,
+                models.Finding.scanner_name == item.get("scanner_name"),
+                models.Finding.title == item.get("title"),
+                models.Finding.file_path == item.get("file_path"),
+                models.Finding.line_number == item.get("line_number"),
+            )
+            .first()
         )
 
-        db.add(finding)
-        nouveaux_findings.append(finding)
+        if existant is not None:
+            # Un scan lancé à la main (interface web) n'a pas de numéro de build :
+            # on ne doit pas effacer le dernier build connu de ce finding.
+            if jenkins_build_number is not None:
+                existant.jenkins_build_number = jenkins_build_number
+                existant.git_commit_sha = git_commit_sha
+            if existant.status == models.FindingStatus.FIXED:
+                existant.status = models.FindingStatus.NEW
+            resultat.append(existant)
+        else:
+            finding = models.Finding(
+                project_id=project_id,
+                jenkins_build_number=jenkins_build_number,
+                git_commit_sha=git_commit_sha,
+                **item,
+            )
+            db.add(finding)
+            # autoflush est désactivé : sans flush, deux éléments identiques
+            # d'un même lot ne se verraient pas et seraient dupliqués.
+            db.flush()
+            resultat.append(finding)
 
     db.commit()
 
-    for finding in nouveaux_findings:
+    for finding in resultat:
         db.refresh(finding)
 
-    return nouveaux_findings
+    return resultat
+
+
+def _sync_finding_status(
+    db: Session,
+    analyse: models.AIAnalysis,
+) -> None:
+    """
+    CORRECTIF 4 : la décision humaine doit atteindre le Finding.
+
+    Le Quality Gate lit Finding.status. Or la validation humaine ne modifiait
+    que AIAnalysis.human_status : approuver un "faux positif" ne débloquait
+    donc jamais le build.
+
+      - humain APPROUVE le verdict IA "faux_positif"  -> FALSE_POSITIVE (ne bloque plus)
+      - humain APPROUVE le verdict IA "vraie_menace"  -> CONFIRMED (bloque toujours)
+      - humain REJETTE / remet en attente             -> on annule : retour à NEW
+    """
+    finding = db.get(models.Finding, analyse.finding_id)
+    if finding is None:
+        return
+
+    if analyse.human_status == models.HumanReviewStatus.APPROUVE:
+        if analyse.ai_verdict == models.AIVerdict.FAUX_POSITIF:
+            finding.status = models.FindingStatus.FALSE_POSITIVE
+        elif analyse.ai_verdict == models.AIVerdict.VRAIE_MENACE:
+            finding.status = models.FindingStatus.CONFIRMED
+    elif finding.status in (
+        models.FindingStatus.FALSE_POSITIVE,
+        models.FindingStatus.CONFIRMED,
+    ):
+        finding.status = models.FindingStatus.NEW
 
 
 # =============================================================================
@@ -239,13 +345,6 @@ def scan_project_with_trivy(
     payload: schemas.ScanRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Lance Trivy sur le dossier indiqué.
-
-    Trivy est utilisé principalement pour détecter
-    les vulnérabilités dans les dépendances et images.
-    """
-
     projet = _get_project_or_error(
         db,
         project_id,
@@ -264,6 +363,8 @@ def scan_project_with_trivy(
             db,
             projet.id,
             parsed,
+            jenkins_build_number=payload.jenkins_build_number,
+            git_commit_sha=payload.git_commit_sha,
         )
 
     except Exception as e:
@@ -286,10 +387,6 @@ def scan_project_with_semgrep(
     payload: schemas.ScanRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Lance Semgrep pour analyser le code source.
-    """
-
     projet = _get_project_or_error(
         db,
         project_id,
@@ -308,6 +405,8 @@ def scan_project_with_semgrep(
             db,
             projet.id,
             parsed,
+            jenkins_build_number=payload.jenkins_build_number,
+            git_commit_sha=payload.git_commit_sha,
         )
 
     except Exception as e:
@@ -330,11 +429,6 @@ def scan_project_with_gitleaks(
     payload: schemas.ScanRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Lance Gitleaks pour détecter les secrets
-    présents dans le projet.
-    """
-
     projet = _get_project_or_error(
         db,
         project_id,
@@ -353,6 +447,8 @@ def scan_project_with_gitleaks(
             db,
             projet.id,
             parsed,
+            jenkins_build_number=payload.jenkins_build_number,
+            git_commit_sha=payload.git_commit_sha,
         )
 
     except Exception as e:
@@ -372,24 +468,24 @@ def scan_project_with_gitleaks(
 )
 def list_findings(
     project_id: int,
+    build: int | None = None,   # CORRECTIF 2 : ?build=N
     db: Session = Depends(get_db),
 ):
-    """
-    Retourne toutes les vulnérabilités d'un projet.
-    """
-
     _get_project_or_error(
         db,
         project_id,
     )
 
-    return (
-        db.query(models.Finding)
-        .filter(
-            models.Finding.project_id == project_id
-        )
-        .all()
+    query = db.query(models.Finding).filter(
+        models.Finding.project_id == project_id
     )
+
+    if build is not None:
+        query = query.filter(
+            models.Finding.jenkins_build_number == build
+        )
+
+    return query.all()
 
 
 # =============================================================================
@@ -402,44 +498,32 @@ def list_findings(
 )
 def score_project_findings(
     project_id: int,
+    build: int | None = None,   # CORRECTIF 2 : ?build=N
     db: Session = Depends(get_db),
 ):
-    """
-    Recalcule le score de priorité de tous les findings
-    d'un projet.
-
-    Pour les vulnérabilités possédant un CVE :
-        - récupération EPSS
-        - vérification KEV
-        - calcul du score final
-
-    Les findings Gitleaks peuvent ne pas avoir de CVE.
-    """
-
     projet = _get_project_or_error(
         db,
         project_id,
     )
 
-    findings = (
-        db.query(models.Finding)
-        .filter(
-            models.Finding.project_id == projet.id
-        )
-        .all()
+    query = db.query(models.Finding).filter(
+        models.Finding.project_id == projet.id
     )
 
+    # En CI : on ne rescore que les findings vus lors de CE build
+    # (sinon on refait des appels EPSS/KEV pour tout l'historique).
+    if build is not None:
+        query = query.filter(
+            models.Finding.jenkins_build_number == build
+        )
+
+    findings = query.all()
+
     for finding in findings:
-
-        # ---------------------------------------------------------
-        # Enrichissement CVE
-        # ---------------------------------------------------------
-
         if (
             finding.vulnerability_id
             and finding.vulnerability_id.startswith("CVE-")
         ):
-
             finding.epss_score = fetch_epss_score(
                 finding.vulnerability_id
             )
@@ -447,10 +531,6 @@ def score_project_findings(
             finding.in_kev = is_in_kev(
                 finding.vulnerability_id
             )
-
-        # ---------------------------------------------------------
-        # Calcul du score
-        # ---------------------------------------------------------
 
         score, severity = compute_priority_score(
             cvss_score=finding.cvss_score,
@@ -471,11 +551,95 @@ def score_project_findings(
     for finding in findings:
         db.refresh(finding)
 
-    # Plus prioritaire en premier
     return sorted(
         findings,
         key=lambda finding: finding.priority_score or 0,
         reverse=True,
+    )
+
+
+# =============================================================================
+# QUALITY GATE CI/CD
+# =============================================================================
+
+@app.get(
+    "/projects/{project_id}/quality-gate",
+    response_model=schemas.QualityGateOut,
+)
+def quality_gate(
+    project_id: int,
+    build: int | None = None,        # ?build=N : seulement ce qui a été vu au build N
+    max_critical: int = 0,           # nombre de critiques tolérés
+    max_high: int | None = None,     # nombre de "high" tolérés (None = non vérifié)
+    db: Session = Depends(get_db),
+):
+    """
+    CORRECTIF 3 : le gate regarde un build précis et applique des seuils.
+
+    Les secrets (Gitleaks) et le code (Semgrep) n'ont pas de CVSS : ils
+    n'atteignent jamais "critical", seulement "high". Sans seuil sur "high",
+    une clé API exposée ne bloquerait jamais le build.
+
+    Statuts qui ne bloquent plus : FIXED, FALSE_POSITIVE, ACCEPTED_RISK.
+    """
+    projet = _get_project_or_error(
+        db,
+        project_id,
+    )
+
+    non_blocking_statuses = [
+        models.FindingStatus.FIXED,
+        models.FindingStatus.FALSE_POSITIVE,
+        models.FindingStatus.ACCEPTED_RISK,
+    ]
+
+    query = db.query(models.Finding).filter(
+        models.Finding.project_id == projet.id,
+        ~models.Finding.status.in_(non_blocking_statuses),
+    )
+
+    if build is not None:
+        query = query.filter(
+            models.Finding.jenkins_build_number == build
+        )
+
+    ouverts = query.all()
+
+    critiques = [
+        f for f in ouverts
+        if f.severity == models.FindingSeverity.CRITICAL
+    ]
+    hauts = [
+        f for f in ouverts
+        if f.severity == models.FindingSeverity.HIGH
+    ]
+
+    raisons = []
+    bloquants = []
+
+    if len(critiques) > max_critical:
+        raisons.append(f"{len(critiques)} critique(s) (max {max_critical})")
+        bloquants += critiques
+
+    if max_high is not None and len(hauts) > max_high:
+        raisons.append(f"{len(hauts)} haute(s) (max {max_high})")
+        bloquants += hauts
+
+    if raisons:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "passed": False,
+                "message": "Quality Gate échoué : " + " ; ".join(raisons) + ".",
+                "blocking_findings": len(bloquants),
+                "finding_ids": [f.id for f in bloquants],
+            },
+        )
+
+    return schemas.QualityGateOut(
+        passed=True,
+        message="Quality Gate réussi : seuils respectés.",
+        blocking_findings=0,
     )
 
 
@@ -491,31 +655,10 @@ def analyze_finding(
     finding_id: int,
     db: Session = Depends(get_db),
 ):
-    """
-    Analyse une vulnérabilité avec le modèle IA configuré
-    via l'API Groq.
-
-    Le modèle est récupéré depuis :
-
-        settings.llm_model
-
-    et la clé API depuis :
-
-        settings.llm_api_key
-    """
-
-    # ---------------------------------------------------------
-    # Recherche du finding
-    # ---------------------------------------------------------
-
     finding = _get_finding_or_error(
         db,
         finding_id,
     )
-
-    # ---------------------------------------------------------
-    # Construction du contexte envoyé à l'IA
-    # ---------------------------------------------------------
 
     context = {
         "title": finding.title,
@@ -528,10 +671,6 @@ def analyze_finding(
         "in_kev": finding.in_kev,
         "code_snippet": finding.code_snippet,
     }
-
-    # ---------------------------------------------------------
-    # Vérification de la configuration Groq
-    # ---------------------------------------------------------
 
     if not settings.llm_api_key:
         raise HTTPException(
@@ -551,12 +690,7 @@ def analyze_finding(
             ),
         )
 
-    # ---------------------------------------------------------
-    # Appel de Groq
-    # ---------------------------------------------------------
-
     try:
-
         result = analyze_finding_with_groq(
             finding_context=context,
             api_key=settings.llm_api_key,
@@ -564,7 +698,6 @@ def analyze_finding(
         )
 
     except requests.exceptions.Timeout as e:
-
         raise HTTPException(
             status_code=504,
             detail=(
@@ -574,7 +707,6 @@ def analyze_finding(
         ) from e
 
     except requests.exceptions.HTTPError as e:
-
         raise HTTPException(
             status_code=502,
             detail=(
@@ -585,7 +717,6 @@ def analyze_finding(
         ) from e
 
     except requests.exceptions.RequestException as e:
-
         raise HTTPException(
             status_code=503,
             detail=(
@@ -596,7 +727,6 @@ def analyze_finding(
         ) from e
 
     except (ValueError, KeyError, TypeError) as e:
-
         raise HTTPException(
             status_code=502,
             detail=(
@@ -606,38 +736,19 @@ def analyze_finding(
             ),
         ) from e
 
-    # ---------------------------------------------------------
-    # Sauvegarde de l'analyse IA
-    # ---------------------------------------------------------
-
     try:
-
         analyse = models.AIAnalysis(
             finding_id=finding.id,
-
-            # Le fournisseur utilisé
             llm_provider="groq",
-
-            # Modèle configuré dans .env
             ai_model_name=settings.llm_model,
-
-            # Verdict retourné par l'IA
             ai_verdict=models.AIVerdict(
                 result["verdict"]
             ),
-
-            # Priorité ajustée par l'IA
             ai_adjusted_priority=models.AIAdjustedPriority(
                 result["adjusted_priority"]
             ),
-
-            # Explication de l'IA
             ai_reasoning=result["reasoning"],
-
-            # Correction proposée
             ai_suggested_fix=result["suggested_fix"],
-
-            # L'analyse doit être validée par un humain
             human_status=models.HumanReviewStatus.EN_ATTENTE,
         )
 
@@ -646,7 +757,6 @@ def analyze_finding(
         db.refresh(analyse)
 
     except Exception as e:
-
         db.rollback()
 
         raise HTTPException(
@@ -673,13 +783,6 @@ def list_finding_analyses(
     finding_id: int,
     db: Session = Depends(get_db),
 ):
-    """
-    Retourne toutes les analyses IA d'un finding.
-
-    La plus récente est retournée en premier.
-    """
-
-    # Vérifie que le finding existe
     _get_finding_or_error(
         db,
         finding_id,
@@ -709,19 +812,10 @@ def create_user(
     payload: schemas.UserCreate,
     db: Session = Depends(get_db),
 ):
-    """
-    Crée un utilisateur.
-
-    ATTENTION :
-    Le mot de passe est actuellement stocké directement.
-    Pour une version de production, il faudra utiliser
-    un véritable système de hashage.
-    """
-
     utilisateur = models.User(
         username=payload.username,
         email=payload.email,
-        password_hash=payload.password,
+        password_hash=hash_password(payload.password),
         role=models.UserRole(payload.role),
     )
 
@@ -739,10 +833,6 @@ def create_user(
 def list_users(
     db: Session = Depends(get_db),
 ):
-    """
-    Retourne tous les utilisateurs.
-    """
-
     return db.query(models.User).all()
 
 
@@ -758,26 +848,8 @@ def review_analysis(
     analysis_id: int,
     payload: schemas.AnalysisReview,
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
-    """
-    Permet à un utilisateur de valider ou rejeter
-    une analyse produite par l'IA.
-
-    Principe :
-
-        IA propose
-             ↓
-        Humain vérifie
-             ↓
-        Humain approuve/rejette
-             ↓
-        Décision enregistrée
-    """
-
-    # ---------------------------------------------------------
-    # Recherche de l'analyse
-    # ---------------------------------------------------------
-
     analyse = db.get(
         models.AIAnalysis,
         analysis_id,
@@ -789,36 +861,15 @@ def review_analysis(
             detail=f"Aucune analyse avec l'id {analysis_id}.",
         )
 
-    # ---------------------------------------------------------
-    # Recherche de l'utilisateur
-    # ---------------------------------------------------------
-
-    utilisateur = db.get(
-        models.User,
-        payload.reviewed_by,
-    )
-
-    if utilisateur is None:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"Aucun utilisateur avec l'id "
-                f"{payload.reviewed_by}."
-            ),
-        )
-
-    # ---------------------------------------------------------
-    # Validation du statut
-    # ---------------------------------------------------------
+    # "current_user" vient du jeton, déjà vérifié par get_current_user.
+    utilisateur = current_user
 
     try:
-
         nouveau_statut = models.HumanReviewStatus(
             payload.human_status
         )
 
     except ValueError as e:
-
         raise HTTPException(
             status_code=400,
             detail=(
@@ -828,12 +879,11 @@ def review_analysis(
             ),
         ) from e
 
-    # ---------------------------------------------------------
-    # Mise à jour
-    # ---------------------------------------------------------
-
     analyse.human_status = nouveau_statut
     analyse.reviewed_by = utilisateur.id
+
+    # CORRECTIF 4 : propager la décision humaine au Finding (lu par le gate).
+    _sync_finding_status(db, analyse)
 
     db.commit()
     db.refresh(analyse)
