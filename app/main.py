@@ -10,6 +10,8 @@
 #   4. review_analysis : la décision humaine met à jour le statut du Finding.
 # -----------------------------------------------------------------------------
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -17,8 +19,9 @@ from sqlalchemy.orm import Session
 import requests
 import jwt
 
-from app.database import get_db
+from app.database import get_db, engine
 from app import models, schemas
+from app.models_builds import BuildRun
 from app.auth import hash_password, verify_password, create_access_token, decode_access_token
 
 from app.scanners.trivy import (
@@ -50,10 +53,21 @@ from app.llm.groq import analyze_finding_with_groq
 # Création de l'application FastAPI
 # -----------------------------------------------------------------------------
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """
+    Au démarrage : crée la table de l'historique des builds si elle n'existe pas
+    encore (les autres tables restent gérées par app/init_db.py).
+    """
+    BuildRun.__table__.create(bind=engine, checkfirst=True)
+    yield
+
+
 app = FastAPI(
     title="VulnScan API",
     description="Détection et priorisation des vulnérabilités par IA",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -558,6 +572,51 @@ def score_project_findings(
     )
 
 
+def _record_build(
+    db: Session,
+    project_id: int,
+    build_number: int,
+    all_findings: list[models.Finding],
+    open_findings: list[models.Finding],
+    passed: bool,
+    blocking: int,
+) -> None:
+    """
+    Enregistre (ou met à jour) l'instantané d'un build : combien de
+    vulnérabilités ouvertes par sévérité, et le verdict du Quality Gate.
+    Appeler deux fois pour le même build met simplement la ligne à jour.
+    """
+    run = (
+        db.query(BuildRun)
+        .filter(
+            BuildRun.project_id == project_id,
+            BuildRun.build_number == build_number,
+        )
+        .first()
+    )
+
+    if run is None:
+        run = BuildRun(project_id=project_id, build_number=build_number)
+        db.add(run)
+
+    run.git_commit_sha = next(
+        (f.git_commit_sha for f in all_findings if f.git_commit_sha),
+        None,
+    )
+
+    def count(severity: models.FindingSeverity) -> int:
+        return sum(1 for f in open_findings if f.severity == severity)
+
+    run.critical = count(models.FindingSeverity.CRITICAL)
+    run.high = count(models.FindingSeverity.HIGH)
+    run.medium = count(models.FindingSeverity.MEDIUM)
+    run.low = count(models.FindingSeverity.LOW)
+    run.blocking = blocking
+    run.passed = passed
+
+    db.commit()
+
+
 # =============================================================================
 # QUALITY GATE CI/CD
 # =============================================================================
@@ -571,6 +630,7 @@ def quality_gate(
     build: int | None = None,        # ?build=N : seulement ce qui a été vu au build N
     max_critical: int = 0,           # nombre de critiques tolérés
     max_high: int | None = None,     # nombre de "high" tolérés (None = non vérifié)
+    record: bool = False,            # True (Jenkins) : enregistre un instantané du build
     db: Session = Depends(get_db),
 ):
     """
@@ -595,7 +655,6 @@ def quality_gate(
 
     query = db.query(models.Finding).filter(
         models.Finding.project_id == projet.id,
-        ~models.Finding.status.in_(non_blocking_statuses),
     )
 
     if build is not None:
@@ -603,7 +662,12 @@ def quality_gate(
             models.Finding.jenkins_build_number == build
         )
 
-    ouverts = query.all()
+    tous_ce_build = query.all()
+
+    ouverts = [
+        f for f in tous_ce_build
+        if f.status not in non_blocking_statuses
+    ]
 
     critiques = [
         f for f in ouverts
@@ -625,6 +689,18 @@ def quality_gate(
         raisons.append(f"{len(hauts)} haute(s) (max {max_high})")
         bloquants += hauts
 
+    # Historique : Jenkins demande d'enregistrer le résultat de CE build.
+    if record and build is not None:
+        _record_build(
+            db,
+            projet.id,
+            build,
+            tous_ce_build,
+            ouverts,
+            passed=not raisons,
+            blocking=len(bloquants),
+        )
+
     if raisons:
         raise HTTPException(
             status_code=422,
@@ -641,6 +717,81 @@ def quality_gate(
         message="Quality Gate réussi : seuils respectés.",
         blocking_findings=0,
     )
+
+
+# =============================================================================
+# HISTORIQUE DES BUILDS
+# =============================================================================
+
+@app.get(
+    "/projects/{project_id}/builds",
+    response_model=list[schemas.BuildRunOut],
+)
+def list_builds(
+    project_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Historique des builds Jenkins enregistrés (le plus récent d'abord).
+    Alimenté par l'appel du Jenkinsfile à /quality-gate?...&record=true.
+    """
+    _get_project_or_error(
+        db,
+        project_id,
+    )
+
+    return (
+        db.query(BuildRun)
+        .filter(BuildRun.project_id == project_id)
+        .order_by(BuildRun.build_number.desc())
+        .all()
+    )
+
+
+# =============================================================================
+# ANALYSES IA D'UN PROJET (une seule requête pour toutes les vulnérabilités)
+# =============================================================================
+
+@app.get(
+    "/projects/{project_id}/analyses",
+    response_model=list[schemas.AnalysisDetailOut],
+)
+def list_project_analyses(
+    project_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Toutes les analyses IA du projet, la plus récente d'abord, avec le titre
+    et la sévérité de la vulnérabilité concernée.
+    """
+    _get_project_or_error(
+        db,
+        project_id,
+    )
+
+    rows = (
+        db.query(models.AIAnalysis, models.Finding)
+        .join(
+            models.Finding,
+            models.AIAnalysis.finding_id == models.Finding.id,
+        )
+        .filter(models.Finding.project_id == project_id)
+        .order_by(
+            models.AIAnalysis.created_at.desc(),
+            models.AIAnalysis.id.desc(),
+        )
+        .all()
+    )
+
+    return [
+        schemas.AnalysisDetailOut(
+            **schemas.AIAnalysisOut.model_validate(analysis).model_dump(),
+            finding_title=finding.title,
+            finding_severity=finding.severity.value,
+            scanner_name=finding.scanner_name,
+        )
+        for analysis, finding in rows
+    ]
 
 
 # =============================================================================

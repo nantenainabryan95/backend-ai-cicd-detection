@@ -4,6 +4,9 @@ import type {
   AIAnalysis,
   AnalysisReview,
   User,
+  NewUser,
+  AnalysisDetail,
+  BuildRun,
   TokenOut,
   QualityGateResult,
   QualityGateOptions,
@@ -172,6 +175,9 @@ export const api = {
 
   listUsers: () => request<User[]>("/users"),
 
+  createUser: (user: NewUser) =>
+    request<User>("/users", { method: "POST", body: JSON.stringify(user) }),
+
   /* ---------------- PROJETS ---------------- */
 
   listProjects: () => request<Project[]>("/projects"),
@@ -187,6 +193,14 @@ export const api = {
   /** build : ne renvoyer que les findings vus au build Jenkins N. */
   listFindings: (projectId: number, build?: number) =>
     request<Finding[]>(withBuild(`/projects/${projectId}/findings`, build)),
+
+  /** Toutes les analyses IA du projet en UNE requête (la plus récente d'abord). */
+  listProjectAnalyses: (projectId: number) =>
+    request<AnalysisDetail[]>(`/projects/${projectId}/analyses`),
+
+  /** Historique des builds Jenkins (le plus récent d'abord). */
+  listBuilds: (projectId: number) =>
+    request<BuildRun[]>(`/projects/${projectId}/builds`),
 
   /* ---------------- SCANNERS ---------------- */
 

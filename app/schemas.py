@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -75,6 +77,18 @@ class FindingOut(BaseModel):
     fix_available: bool
 
     # -------------------------------------------------------------------------
+    # Détail (page "fiche d'une vulnérabilité")
+    # -------------------------------------------------------------------------
+
+    description: str | None = None
+
+    code_snippet: str | None = None
+
+    line_number: int | None = None
+
+    status: str = "new"
+
+    # -------------------------------------------------------------------------
     # Informations CI/CD Jenkins
     # -------------------------------------------------------------------------
 
@@ -108,6 +122,34 @@ class QualityGateOut(BaseModel):
 
 
 # =============================================================================
+# HISTORIQUE DES BUILDS
+# =============================================================================
+
+class BuildRunOut(BaseModel):
+    build_number: int
+
+    git_commit_sha: str | None
+
+    created_at: datetime | None
+
+    critical: int
+
+    high: int
+
+    medium: int
+
+    low: int
+
+    blocking: int
+
+    passed: bool
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+# =============================================================================
 # ANALYSES IA
 # =============================================================================
 
@@ -132,9 +174,21 @@ class AIAnalysisOut(BaseModel):
 
     reviewed_by: int | None
 
+    created_at: datetime | None = None
+
     model_config = {
         "from_attributes": True
     }
+
+
+class AnalysisDetailOut(AIAnalysisOut):
+    """Une analyse + les informations de la vulnérabilité concernée."""
+
+    finding_title: str
+
+    finding_severity: str
+
+    scanner_name: str
 
 
 # =============================================================================

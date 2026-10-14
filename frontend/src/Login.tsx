@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 
 import { api, errorMessage } from "./api";
+import { Icon } from "./icons";
 import type { User } from "./types";
 
 interface LoginProps {
@@ -13,6 +14,7 @@ interface LoginProps {
 function Login({ onLoggedIn, message }: LoginProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,8 +31,7 @@ function Login({ onLoggedIn, message }: LoginProps) {
 
     try {
       await api.login(username.trim(), password);
-      const user = await api.me();
-      onLoggedIn(user);
+      onLoggedIn(await api.me());
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -39,43 +40,72 @@ function Login({ onLoggedIn, message }: LoginProps) {
   }
 
   return (
-    <div className="login-page">
-      <form className="login-card" onSubmit={handleSubmit}>
-        <div className="login-brand">
-          <div className="brand-mark">V</div>
+    <div className="login-screen">
+      <section className="login-hero">
+        <div className="login-logo">
+          <Icon name="shield" size={44} />
           <span>VulnScan</span>
         </div>
+        <p className="login-tag">Analyse • Détecte • Protège</p>
 
-        <h1>Connexion</h1>
-        <p className="login-subtitle">
-          Connectez-vous pour consulter et valider les analyses.
+        <h2>
+          Plateforme de gestion
+          <br />
+          des vulnérabilités
+        </h2>
+        <p>
+          Scannez vos projets, identifiez les failles, priorisez les risques avec l'IA et validez
+          les analyses humaines.
         </p>
+      </section>
 
-        {message && <div className="login-notice">{message}</div>}
-        {error && <div className="login-error">{error}</div>}
+      <form className="login-card" onSubmit={handleSubmit}>
+        <h1>Connexion</h1>
+        <p className="muted">Accédez à votre espace VulnScan</p>
+
+        {message && <div className="notice">{message}</div>}
+        {error && <div className="form-error">{error}</div>}
 
         <label htmlFor="username">Nom d'utilisateur</label>
-        <input
-          id="username"
-          type="text"
-          autoComplete="username"
-          autoFocus
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-        />
+        <div className="input-icon">
+          <Icon name="user" size={16} />
+          <input
+            id="username"
+            type="text"
+            placeholder="Entrez votre nom d'utilisateur"
+            autoComplete="username"
+            autoFocus
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+        </div>
 
         <label htmlFor="password">Mot de passe</label>
-        <input
-          id="password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+        <div className="input-icon">
+          <Icon name="lock" size={16} />
+          <input
+            id="password"
+            type={showPassword ? "text" : "password"}
+            placeholder="Entrez votre mot de passe"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button
+            type="button"
+            className="eye"
+            onClick={() => setShowPassword((v) => !v)}
+            aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+          >
+            <Icon name={showPassword ? "eyeOff" : "eye"} size={16} />
+          </button>
+        </div>
 
-        <button type="submit" className="login-button" disabled={loading}>
+        <button type="submit" className="btn btn-primary btn-block" disabled={loading}>
           {loading ? "Connexion..." : "Se connecter"}
         </button>
+
+        <p className="login-foot">Pas encore de compte ? Contactez votre administrateur.</p>
       </form>
     </div>
   );

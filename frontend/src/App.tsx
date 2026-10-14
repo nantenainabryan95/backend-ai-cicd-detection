@@ -4,18 +4,15 @@ import { api, auth, errorMessage, setUnauthorizedHandler } from "./api";
 import type { User } from "./types";
 
 import Login from "./Login";
-import Dashboard from "./Dashboard";
+import Shell from "./Shell";
 
-// Les variables de couleur (:root) sont dans App.css : on le charge ici pour
-// que la page de connexion en profite aussi.
-import "./App.css";
-import "./auth.css";
+import "./styles.css";
 
 /**
  * Point d'entrée : décide quoi afficher selon l'état de connexion.
  *   - jeton en cours de vérification  -> "Chargement"
  *   - pas connecté                    -> page de connexion
- *   - connecté                        -> tableau de bord
+ *   - connecté                        -> application (barre latérale + pages)
  */
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -60,7 +57,7 @@ function App() {
     return <Login onLoggedIn={handleLoggedIn} message={sessionMessage} />;
   }
 
-  return <Dashboard user={user} onLogout={handleLogout} />;
+  return <Shell user={user} onLogout={handleLogout} />;
 }
 
 export default App;

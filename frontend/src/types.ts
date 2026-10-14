@@ -17,6 +17,10 @@ export interface Finding {
   is_exposed: boolean;
   priority_score: number | null;
   fix_available: boolean;
+  description: string | null;
+  code_snippet: string | null;
+  line_number: number | null;
+  status: string;
   /** Dernier build Jenkins qui a vu ce finding (null si jamais scanné par Jenkins). */
   jenkins_build_number: number | null;
   git_commit_sha: string | null;
@@ -33,17 +37,34 @@ export interface AIAnalysis {
   ai_suggested_fix: string | null;
   human_status: string;
   reviewed_by: number | null;
+  created_at: string | null;
 }
 
-/**
- * Données envoyées à FastAPI pour approuver ou rejeter une analyse IA.
- * "reviewed_by" n'est plus envoyé : le serveur le déduit du jeton.
- */
+/** Une analyse + la vulnérabilité concernée (GET /projects/{id}/analyses). */
+export interface AnalysisDetail extends AIAnalysis {
+  finding_title: string;
+  finding_severity: string;
+  scanner_name: string;
+}
+
+/** "reviewed_by" n'est plus envoyé : le serveur le déduit du jeton. */
 export interface AnalysisReview {
   human_status: "approuve" | "rejete";
 }
 
-/** Utilisateur connecté (GET /auth/me). */
+/** Instantané d'un build Jenkins (GET /projects/{id}/builds). */
+export interface BuildRun {
+  build_number: number;
+  git_commit_sha: string | null;
+  created_at: string | null;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  blocking: number;
+  passed: boolean;
+}
+
 export interface User {
   id: number;
   username: string;
@@ -51,7 +72,13 @@ export interface User {
   role: string;
 }
 
-/** Réponse de POST /auth/login. */
+export interface NewUser {
+  username: string;
+  email: string;
+  password: string;
+  role: string;
+}
+
 export interface TokenOut {
   access_token: string;
   token_type: string;
