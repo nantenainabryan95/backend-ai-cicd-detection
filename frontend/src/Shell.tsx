@@ -30,6 +30,8 @@ interface ShellProps {
 
 /** Cadre de l'application : barre latérale, barre du haut, et la page courante. */
 function Shell({ user, onLogout }: ShellProps) {
+  // Les développeurs ne peuvent pas valider les analyses (réservé à admin, appsec, tech_lead).
+  const canReview = user.role !== "developer";
   const ws = useWorkspace();
   const route = useRoute();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -60,14 +62,14 @@ function Shell({ user, onLogout }: ShellProps) {
 
     if (section === "findings") {
       return segments[1] ? (
-        <FindingDetailPage key={segments[1]} ws={ws} findingId={Number(segments[1])} />
+        <FindingDetailPage key={segments[1]} ws={ws} findingId={Number(segments[1])} canReview={canReview} />
       ) : (
         <FindingsPage ws={ws} />
       );
     }
 
     if (section === "analyses") {
-      return <AnalysesPage key={segments[1] ?? "all"} ws={ws} initialTab={segments[1] === "validation" ? "pending" : "all"} />;
+      return <AnalysesPage key={segments[1] ?? "all"} ws={ws} canReview={canReview} initialTab={segments[1] === "validation" ? "pending" : "all"} />;
     }
 
     return <DashboardPage ws={ws} />;

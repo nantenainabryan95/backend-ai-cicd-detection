@@ -59,6 +59,14 @@ async def lifespan(_: FastAPI):
     Au démarrage : crée la table de l'historique des builds si elle n'existe pas
     encore (les autres tables restent gérées par app/init_db.py).
     """
+    # Refuse de démarrer avec un secret JWT par défaut ou trop court : sinon n'importe qui
+    # pourrait fabriquer un jeton valide.
+    if settings.jwt_secret == "change-me" or len(settings.jwt_secret) < 32:
+        raise RuntimeError(
+            "JWT_SECRET absent ou trop faible dans le .env (32 caractères minimum). "
+            'Générez-en un : python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+
     BuildRun.__table__.create(bind=engine, checkfirst=True)
     yield
 
@@ -130,6 +138,25 @@ def require_admin(
         raise HTTPException(
             status_code=403,
             detail="Action réservée aux administrateurs.",
+        )
+    return current_user
+
+
+REVIEWER_ROLES = {
+    models.UserRole.ADMIN,
+    models.UserRole.APPSEC,
+    models.UserRole.TECH_LEAD,
+}
+
+
+def require_reviewer(
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    """Réserve la validation humaine aux rôles admin, appsec et tech_lead (403 sinon)."""
+    if current_user.role not in REVIEWER_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="La validation des analyses est réservée aux rôles admin, appsec et tech_lead.",
         )
     return current_user
 
@@ -1117,7 +1144,7 @@ def review_analysis(
     analysis_id: int,
     payload: schemas.AnalysisReview,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_reviewer),
 ):
     analyse = db.get(
         models.AIAnalysis,

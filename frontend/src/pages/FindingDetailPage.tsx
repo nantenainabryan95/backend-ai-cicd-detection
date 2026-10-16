@@ -38,10 +38,12 @@ function AnalysisView({
   analysis,
   finding,
   ws,
+  canReview,
 }: {
   analysis: AnalysisDetail | undefined;
   finding: Finding;
   ws: Workspace;
+  canReview: boolean;
 }) {
   if (!analysis) {
     return (
@@ -116,7 +118,7 @@ function AnalysisView({
           {analysis.human_status === "rejete" && <p className="text-bad">✕ Analyse rejetée{reviewer ? ` par ${reviewer}` : ""}</p>}
         </div>
 
-        {analysis.human_status === "en_attente" && (
+        {analysis.human_status === "en_attente" && canReview && (
           <div className="btn-row">
             <button type="button" className="btn btn-ok" onClick={() => ws.review(analysis.id, "approuve")}>
               <Icon name="check" size={15} /> Approuver
@@ -131,7 +133,15 @@ function AnalysisView({
   );
 }
 
-export default function FindingDetailPage({ ws, findingId }: { ws: Workspace; findingId: number }) {
+export default function FindingDetailPage({
+  ws,
+  findingId,
+  canReview,
+}: {
+  ws: Workspace;
+  findingId: number;
+  canReview: boolean;
+}) {
   const [tab, setTab] = useState("details");
   const finding = ws.findings.find((f) => f.id === findingId);
   const history = ws.analyses.filter((a) => a.finding_id === findingId);
@@ -247,7 +257,7 @@ export default function FindingDetailPage({ ws, findingId }: { ws: Workspace; fi
         </>
       )}
 
-      {tab === "analysis" && <AnalysisView analysis={analysis} finding={finding} ws={ws} />}
+      {tab === "analysis" && <AnalysisView analysis={analysis} finding={finding} ws={ws} canReview={canReview} />}
 
       {tab === "history" && (
         <section className="card">

@@ -6,7 +6,15 @@ import { navigate } from "../router";
 import { PRIORITY_LABELS, formatDate, label } from "../ui";
 import type { Workspace } from "../useWorkspace";
 
-export default function AnalysesPage({ ws, initialTab }: { ws: Workspace; initialTab: "all" | "pending" }) {
+export default function AnalysesPage({
+  ws,
+  initialTab,
+  canReview,
+}: {
+  ws: Workspace;
+  initialTab: "all" | "pending";
+  canReview: boolean;
+}) {
   const [tab, setTab] = useState<string>(initialTab);
 
   // "À valider" : la DERNIÈRE analyse de chaque vulnérabilité, si elle attend un humain.
@@ -74,7 +82,7 @@ export default function AnalysesPage({ ws, initialTab }: { ws: Workspace; initia
               </div>
 
               <div className="analysis-actions">
-                {a.human_status === "en_attente" ? (
+                {a.human_status === "en_attente" && canReview ? (
                   <>
                     <button type="button" className="btn btn-ok btn-sm" onClick={() => ws.review(a.id, "approuve")}>
                       <Icon name="check" size={14} /> Approuver
