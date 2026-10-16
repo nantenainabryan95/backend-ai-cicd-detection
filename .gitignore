@@ -1,7 +1,9 @@
-
 .env
 __pycache__/
 *.pyc
 venv/
 node_modules/
 dist/
+.auth-header
+api-response.tmp
+gate.json

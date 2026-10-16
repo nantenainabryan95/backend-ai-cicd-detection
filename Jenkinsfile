@@ -25,7 +25,7 @@ def pickForAnalysis(List findings, int max) {
 // Pas de --retry ici : relancer un POST de scan sur une erreur 500 referait tout le scan.
 def api(String method, String path, String body = null) {
     def cmd = "curl -sS --max-time 900 -o api-response.tmp -w '%{http_code}' " +
-              "-X ${method} '${params.VULNSCAN_API}${path}'"
+              "-H @.auth-header -X ${method} '${params.VULNSCAN_API}${path}'"
     if (body) {
         cmd += " -H 'Content-Type: application/json' -d '${body}'"
     }
@@ -90,6 +90,25 @@ pipeline {
         stage('API VulnScan disponible ?') {
             steps {
                 sh "curl -sS --fail-with-body --max-time 10 --retry 3 --retry-connrefused ${params.VULNSCAN_API}/health"
+            }
+        }
+
+        stage('Connexion API') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'vulnscan-api',
+                                                  usernameVariable: 'API_USER',
+                                                  passwordVariable: 'API_PASS')]) {
+                    script {
+                        def raw = sh(
+                            script: '''curl -sS --fail-with-body --max-time 30 -X POST "$VULNSCAN_API/auth/login" --data-urlencode "username=$API_USER" --data-urlencode "password=$API_PASS"''',
+                            returnStdout: true
+                        ).trim()
+                        def token = parseJson(raw).access_token
+                        // Fichier d'en-tête : le jeton n'est jamais écrit dans les logs
+                        writeFile file: '.auth-header', text: "Authorization: Bearer ${token}\n"
+                        echo 'Connecté à l\'API VulnScan (compte de service).'
+                    }
+                }
             }
         }
 
@@ -160,7 +179,7 @@ pipeline {
 
                     // On lit le code HTTP nous-mêmes : 200 = passé, 422 = bloqué, autre = erreur technique
                     def code = sh(
-                        script: "curl -sS --max-time 60 -o gate.json -w '%{http_code}' '${url}'",
+                        script: "curl -sS --max-time 60 -H @.auth-header -o gate.json -w '%{http_code}' '${url}'",
                         returnStdout: true
                     ).trim()
                     def body = readFile('gate.json')
@@ -183,6 +202,7 @@ pipeline {
 
     post {
         always {
+            sh 'rm -f .auth-header api-response.tmp'
             archiveArtifacts artifacts: 'vulnscan-findings.json', allowEmptyArchive: true
             echo "Build Jenkins terminé : #${env.BUILD_NUMBER}"
         }

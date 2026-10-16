@@ -122,6 +122,18 @@ def get_current_user(
     return utilisateur
 
 
+def require_admin(
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    """Réserve une route au rôle admin (403 sinon)."""
+    if current_user.role != models.UserRole.ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Action réservée aux administrateurs.",
+        )
+    return current_user
+
+
 @app.post("/auth/login", response_model=schemas.TokenOut)
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -183,6 +195,7 @@ def root():
 
 @app.post(
     "/projects",
+    dependencies=[Depends(get_current_user)],
     response_model=schemas.ProjectOut,
 )
 def create_project(
@@ -203,6 +216,7 @@ def create_project(
 
 @app.get(
     "/projects",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.ProjectOut],
 )
 def list_projects(
@@ -352,6 +366,7 @@ def _sync_finding_status(
 
 @app.post(
     "/projects/{project_id}/scan/trivy",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.FindingOut],
 )
 def scan_project_with_trivy(
@@ -394,6 +409,7 @@ def scan_project_with_trivy(
 
 @app.post(
     "/projects/{project_id}/scan/semgrep",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.FindingOut],
 )
 def scan_project_with_semgrep(
@@ -436,6 +452,7 @@ def scan_project_with_semgrep(
 
 @app.post(
     "/projects/{project_id}/scan/gitleaks",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.FindingOut],
 )
 def scan_project_with_gitleaks(
@@ -478,6 +495,7 @@ def scan_project_with_gitleaks(
 
 @app.get(
     "/projects/{project_id}/findings",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.FindingOut],
 )
 def list_findings(
@@ -508,6 +526,7 @@ def list_findings(
 
 @app.post(
     "/projects/{project_id}/score",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.FindingOut],
 )
 def score_project_findings(
@@ -623,6 +642,7 @@ def _record_build(
 
 @app.get(
     "/projects/{project_id}/quality-gate",
+    dependencies=[Depends(get_current_user)],
     response_model=schemas.QualityGateOut,
 )
 def quality_gate(
@@ -725,6 +745,7 @@ def quality_gate(
 
 @app.get(
     "/projects/{project_id}/builds",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.BuildRunOut],
 )
 def list_builds(
@@ -754,6 +775,7 @@ def list_builds(
 
 @app.get(
     "/projects/{project_id}/analyses",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.AnalysisDetailOut],
 )
 def list_project_analyses(
@@ -800,6 +822,7 @@ def list_project_analyses(
 
 @app.post(
     "/findings/{finding_id}/analyze",
+    dependencies=[Depends(get_current_user)],
     response_model=schemas.AIAnalysisOut,
 )
 def analyze_finding(
@@ -928,6 +951,7 @@ def analyze_finding(
 
 @app.get(
     "/findings/{finding_id}/analyses",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.AIAnalysisOut],
 )
 def list_finding_analyses(
@@ -957,6 +981,7 @@ def list_finding_analyses(
 
 @app.post(
     "/users",
+    dependencies=[Depends(require_admin)],
     response_model=schemas.UserOut,
 )
 def create_user(
@@ -979,6 +1004,7 @@ def create_user(
 
 @app.get(
     "/users",
+    dependencies=[Depends(get_current_user)],
     response_model=list[schemas.UserOut],
 )
 def list_users(
@@ -993,6 +1019,7 @@ def list_users(
 
 @app.patch(
     "/analyses/{analysis_id}/review",
+    dependencies=[Depends(get_current_user)],
     response_model=schemas.AIAnalysisOut,
 )
 def review_analysis(
