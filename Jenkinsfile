@@ -24,13 +24,14 @@ def pickForAnalysis(List findings, int max) {
 // du serveur est affiché dans le log (avec returnStdout seul, il serait avalé).
 // Pas de --retry ici : relancer un POST de scan sur une erreur 500 referait tout le scan.
 def api(String method, String path, String body = null) {
-    def cmd = "curl -sS --max-time 900 -o api-response.tmp -w '%{http_code}' " +
-              "-H @.auth-header -X ${method} '${params.VULNSCAN_API}${path}'"
+    def tmp = "${env.WORKSPACE_TMP}/api-response.tmp"
+    def cmd = "curl -sS --max-time 900 -o '${tmp}' -w '%{http_code}' " +
+              "-H @'${env.WORKSPACE_TMP}/auth-header' -X ${method} '${params.VULNSCAN_API}${path}'"
     if (body) {
         cmd += " -H 'Content-Type: application/json' -d '${body}'"
     }
     def code = sh(script: cmd, returnStdout: true).trim()
-    def resp = fileExists('api-response.tmp') ? readFile('api-response.tmp').trim() : ''
+    def resp = fileExists(tmp) ? readFile(tmp).trim() : ''
     if (!code.startsWith('2')) {
         error("API ${method} ${path} -> HTTP ${code} : ${resp}")
     }
@@ -58,7 +59,7 @@ pipeline {
                description: "URL de l'API VulnScan, vue depuis Jenkins")
         string(name: 'PROJECT_ID',       defaultValue: '1',
                description: "Id du projet dans VulnScan")
-        string(name: 'TARGET_PATH',      defaultValue: 'C:/Users/Bryan/Desktop/vulnscan',
+        string(name: 'TARGET_PATH',      defaultValue: 'C:/Users/Bryan/tp_jenkins/jenkins_simple/jenkins_data/workspace/vulnscan',
                description: "Chemin du code à scanner TEL QUE VU PAR L'HÔTE DOCKER (avec des /)")
         string(name: 'MAX_AI_ANALYSES', defaultValue: '10',
                description: "Nb max de findings analysés par l'IA (les plus prioritaires)")
@@ -82,6 +83,10 @@ pipeline {
                         git branch: 'master', url: 'https://github.com/nantenainabryan95/backend-ai-cicd-detection.git'
                     }
                     env.GIT_SHA = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    // Supprime les fichiers non versionnés des builds précédents (rapports, JSON...)
+                    sh 'git clean -ffdx'
+                    sh 'git status --short'
+                    echo "Dossier scanné = code du commit ${env.GIT_SHA}"
                 }
                 echo "Build Jenkins : #${env.BUILD_NUMBER} | Commit : ${env.GIT_SHA}"
             }
@@ -105,7 +110,7 @@ pipeline {
                         ).trim()
                         def token = parseJson(raw).access_token
                         // Fichier d'en-tête : le jeton n'est jamais écrit dans les logs
-                        writeFile file: '.auth-header', text: "Authorization: Bearer ${token}\n"
+                        writeFile file: "${env.WORKSPACE_TMP}/auth-header", text: "Authorization: Bearer ${token}\n"
                         echo 'Connecté à l\'API VulnScan (compte de service).'
                     }
                 }
@@ -179,7 +184,7 @@ pipeline {
 
                     // On lit le code HTTP nous-mêmes : 200 = passé, 422 = bloqué, autre = erreur technique
                     def code = sh(
-                        script: "curl -sS --max-time 60 -H @.auth-header -o gate.json -w '%{http_code}' '${url}'",
+                        script: "curl -sS --max-time 60 -H @'${env.WORKSPACE_TMP}/auth-header' -o gate.json -w '%{http_code}' '${url}'",
                         returnStdout: true
                     ).trim()
                     def body = readFile('gate.json')
@@ -202,7 +207,7 @@ pipeline {
 
     post {
         always {
-            sh 'rm -f .auth-header api-response.tmp'
+            sh "rm -f '${env.WORKSPACE_TMP}/auth-header' '${env.WORKSPACE_TMP}/api-response.tmp'"
             archiveArtifacts artifacts: 'vulnscan-findings.json', allowEmptyArchive: true
             echo "Build Jenkins terminé : #${env.BUILD_NUMBER}"
         }
