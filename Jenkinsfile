@@ -20,14 +20,21 @@ def pickForAnalysis(List findings, int max) {
     return findings.findAll { it.severity != 'low' }.take(max)
 }
 
-// Appel API : --fail-with-body affiche le message d'erreur du serveur dans les logs
+// Appel API : on récupère le code HTTP ET le corps de la réponse. En cas d'erreur, le message
+// du serveur est affiché dans le log (avec returnStdout seul, il serait avalé).
+// Pas de --retry ici : relancer un POST de scan sur une erreur 500 referait tout le scan.
 def api(String method, String path, String body = null) {
-    def cmd = "curl -sS --fail-with-body --max-time 600 --retry 2 --retry-connrefused " +
+    def cmd = "curl -sS --max-time 900 -o api-response.tmp -w '%{http_code}' " +
               "-X ${method} '${params.VULNSCAN_API}${path}'"
     if (body) {
         cmd += " -H 'Content-Type: application/json' -d '${body}'"
     }
-    return sh(script: cmd, returnStdout: true).trim()
+    def code = sh(script: cmd, returnStdout: true).trim()
+    def resp = fileExists('api-response.tmp') ? readFile('api-response.tmp').trim() : ''
+    if (!code.startsWith('2')) {
+        error("API ${method} ${path} -> HTTP ${code} : ${resp}")
+    }
+    return resp
 }
 
 def scanBody() {
@@ -149,7 +156,7 @@ pipeline {
             steps {
                 script {
                     def url = "${params.VULNSCAN_API}/projects/${params.PROJECT_ID}/quality-gate" +
-                              "?build=${env.BUILD_NUMBER}&max_critical=${params.MAX_CRITICAL}&max_high=${params.MAX_HIGH}"
+                              "?build=${env.BUILD_NUMBER}&max_critical=${params.MAX_CRITICAL}&max_high=${params.MAX_HIGH}&record=true"
 
                     // On lit le code HTTP nous-mêmes : 200 = passé, 422 = bloqué, autre = erreur technique
                     def code = sh(
