@@ -979,20 +979,53 @@ def list_finding_analyses(
 # UTILISATEURS
 # =============================================================================
 
+def _parse_role(role: str) -> models.UserRole:
+    try:
+        return models.UserRole(role)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Rôle invalide. Rôles : " + ", ".join(r.value for r in models.UserRole),
+        )
+
+
+def _check_password(password: str) -> None:
+    if len(password) < 8:
+        raise HTTPException(
+            status_code=422,
+            detail="Le mot de passe doit contenir au moins 8 caractères.",
+        )
+
+
+def _check_unique(db: Session, username: str | None, email: str | None, exclude_id: int | None = None) -> None:
+    """409 si le nom d'utilisateur ou l'email est déjà pris (au lieu d'une erreur 500)."""
+    query = db.query(models.User)
+    if exclude_id is not None:
+        query = query.filter(models.User.id != exclude_id)
+    if username is not None and query.filter(models.User.username == username).first():
+        raise HTTPException(status_code=409, detail=f"Le nom d'utilisateur '{username}' existe déjà.")
+    if email is not None and query.filter(models.User.email == email).first():
+        raise HTTPException(status_code=409, detail=f"L'email '{email}' est déjà utilisé.")
+
+
 @app.post(
     "/users",
-    dependencies=[Depends(require_admin)],
     response_model=schemas.UserOut,
+    dependencies=[Depends(require_admin)],
 )
 def create_user(
     payload: schemas.UserCreate,
     db: Session = Depends(get_db),
 ):
+    role = _parse_role(payload.role)
+    _check_password(payload.password)
+    _check_unique(db, payload.username, payload.email)
+
     utilisateur = models.User(
         username=payload.username,
         email=payload.email,
         password_hash=hash_password(payload.password),
-        role=models.UserRole(payload.role),
+        role=role,
     )
 
     db.add(utilisateur)
@@ -1011,6 +1044,64 @@ def list_users(
     db: Session = Depends(get_db),
 ):
     return db.query(models.User).all()
+
+
+@app.patch(
+    "/users/{user_id}",
+    response_model=schemas.UserOut,
+)
+def update_user(
+    user_id: int,
+    payload: schemas.UserUpdate,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Modifie l'email, le rôle et/ou le mot de passe (le nom d'utilisateur reste fixe)."""
+    utilisateur = db.get(models.User, user_id)
+    if utilisateur is None:
+        raise HTTPException(status_code=404, detail=f"Aucun utilisateur avec l'id {user_id}.")
+
+    if payload.role is not None:
+        nouveau_role = _parse_role(payload.role)
+        # Un admin ne peut pas se retirer ses propres droits : on évite de se retrouver sans administrateur.
+        if utilisateur.id == admin.id and nouveau_role != utilisateur.role:
+            raise HTTPException(status_code=400, detail="Vous ne pouvez pas modifier votre propre rôle.")
+        utilisateur.role = nouveau_role
+
+    if payload.email is not None and payload.email != utilisateur.email:
+        _check_unique(db, None, payload.email, exclude_id=utilisateur.id)
+        utilisateur.email = payload.email
+
+    if payload.password:
+        _check_password(payload.password)
+        utilisateur.password_hash = hash_password(payload.password)
+
+    db.commit()
+    db.refresh(utilisateur)
+    return utilisateur
+
+
+@app.delete("/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Supprime un compte. Ses validations passées restent, sans nom de relecteur."""
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="Vous ne pouvez pas supprimer votre propre compte.")
+
+    utilisateur = db.get(models.User, user_id)
+    if utilisateur is None:
+        raise HTTPException(status_code=404, detail=f"Aucun utilisateur avec l'id {user_id}.")
+
+    # La clé étrangère reviewed_by empêcherait la suppression : on détache d'abord les validations.
+    db.query(models.AIAnalysis).filter(models.AIAnalysis.reviewed_by == user_id).update(
+        {"reviewed_by": None}
+    )
+    db.delete(utilisateur)
+    db.commit()
+    return {"detail": "Utilisateur supprimé."}
 
 
 # =============================================================================

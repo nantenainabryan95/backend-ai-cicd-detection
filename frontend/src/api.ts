@@ -5,6 +5,7 @@ import type {
   AnalysisReview,
   User,
   NewUser,
+  UserUpdate,
   AnalysisDetail,
   BuildRun,
   TokenOut,
@@ -177,6 +178,12 @@ export const api = {
 
   createUser: (user: NewUser) =>
     request<User>("/users", { method: "POST", body: JSON.stringify(user) }),
+
+  updateUser: (id: number, data: UserUpdate) =>
+    request<User>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  deleteUser: (id: number) =>
+    request<{ detail: string }>(`/users/${id}`, { method: "DELETE" }),
 
   /* ---------------- PROJETS ---------------- */
 

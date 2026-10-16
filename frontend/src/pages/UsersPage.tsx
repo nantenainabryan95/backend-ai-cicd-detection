@@ -12,16 +12,41 @@ const EMPTY_FORM = { username: "", email: "", password: "", role: "developer" };
 
 export default function UsersPage({ ws, user }: { ws: Workspace; user: User }) {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<User | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const isAdmin = user.role === "admin";
 
+  function closeModal() {
+    setOpen(false);
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setFormError(null);
+  }
+
+  function openEdit(u: User) {
+    setEditing(u);
+    setForm({ username: u.username, email: u.email, password: "", role: u.role });
+    setFormError(null);
+  }
+
+  async function handleDelete(u: User) {
+    if (!window.confirm(`Supprimer le compte « ${u.username} » ? Cette action est définitive.`)) return;
+    setActionError(null);
+    try {
+      await ws.deleteUser(u.id);
+    } catch (err) {
+      setActionError(errorMessage(err));
+    }
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
 
-    if (!form.username.trim() || !form.email.trim() || !form.password) {
+    if (!form.email.trim() || (!editing && (!form.username.trim() || !form.password))) {
       setFormError("Tous les champs sont obligatoires.");
       return;
     }
@@ -30,9 +55,16 @@ export default function UsersPage({ ws, user }: { ws: Workspace; user: User }) {
     setFormError(null);
 
     try {
-      await ws.createUser({ ...form, username: form.username.trim(), email: form.email.trim() });
-      setForm(EMPTY_FORM);
-      setOpen(false);
+      if (editing) {
+        await ws.updateUser(editing.id, {
+          email: form.email.trim(),
+          role: form.role,
+          password: form.password || undefined,
+        });
+      } else {
+        await ws.createUser({ ...form, username: form.username.trim(), email: form.email.trim() });
+      }
+      closeModal();
     } catch (err) {
       setFormError(errorMessage(err));
     } finally {
@@ -55,8 +87,10 @@ export default function UsersPage({ ws, user }: { ws: Workspace; user: User }) {
       />
 
       {!isAdmin && (
-        <p className="notice">Seul un administrateur peut créer des comptes.</p>
+        <p className="notice">Seul un administrateur peut créer, modifier ou supprimer des comptes.</p>
       )}
+
+      {actionError && <div className="form-error">{actionError}</div>}
 
       <section className="card flush">
         <div className="table-wrap">
@@ -67,6 +101,7 @@ export default function UsersPage({ ws, user }: { ws: Workspace; user: User }) {
                 <th>Nom d'utilisateur</th>
                 <th>Email</th>
                 <th>Rôle</th>
+                {isAdmin && <th>Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -83,6 +118,25 @@ export default function UsersPage({ ws, user }: { ws: Workspace; user: User }) {
                   <td>
                     <span className={`soft-pill role-${u.role}`}>{label(ROLE_LABELS, u.role)}</span>
                   </td>
+                  {isAdmin && (
+                    <td>
+                      <span className="btn-row">
+                        <button type="button" className="btn btn-outline btn-sm" onClick={() => openEdit(u)}>
+                          Modifier
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          style={{ color: "#a52326", borderColor: "#f3c2c3" }}
+                          disabled={u.id === user.id}
+                          title={u.id === user.id ? "Vous ne pouvez pas supprimer votre propre compte" : undefined}
+                          onClick={() => handleDelete(u)}
+                        >
+                          Supprimer
+                        </button>
+                      </span>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -90,20 +144,20 @@ export default function UsersPage({ ws, user }: { ws: Workspace; user: User }) {
         </div>
       </section>
 
-      {open && (
-        <div className="modal-backdrop" onClick={() => setOpen(false)}>
+      {(open || editing) && (
+        <div className="modal-backdrop" onClick={closeModal}>
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
-            <h2>Nouvel utilisateur</h2>
+            <h2>{editing ? "Modifier l'utilisateur" : "Nouvel utilisateur"}</h2>
 
             {formError && <div className="form-error">{formError}</div>}
 
             <label htmlFor="new-username">Nom d'utilisateur</label>
-            <input id="new-username" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+            <input id="new-username" disabled={!!editing} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
 
             <label htmlFor="new-email">Email</label>
             <input id="new-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
 
-            <label htmlFor="new-password">Mot de passe</label>
+            <label htmlFor="new-password">{editing ? "Nouveau mot de passe (laisser vide pour ne pas changer)" : "Mot de passe"}</label>
             <input id="new-password" type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
 
             <label htmlFor="new-role">Rôle</label>
@@ -114,9 +168,9 @@ export default function UsersPage({ ws, user }: { ws: Workspace; user: User }) {
             </select>
 
             <div className="btn-row end">
-              <button type="button" className="btn btn-outline" onClick={() => setOpen(false)}>Annuler</button>
+              <button type="button" className="btn btn-outline" onClick={closeModal}>Annuler</button>
               <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? "Création..." : "Créer"}
+                {saving ? "Enregistrement..." : editing ? "Enregistrer" : "Créer"}
               </button>
             </div>
           </form>

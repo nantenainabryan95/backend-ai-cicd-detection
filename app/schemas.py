@@ -205,6 +205,16 @@ class UserCreate(BaseModel):
     role: str = "developer"
 
 
+class UserUpdate(BaseModel):
+    """Champs modifiables d'un utilisateur (tous facultatifs)."""
+
+    email: str | None = None
+
+    role: str | None = None
+
+    password: str | None = None
+
+
 class UserOut(BaseModel):
     id: int
 

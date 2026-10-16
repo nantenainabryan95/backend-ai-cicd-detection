@@ -79,6 +79,12 @@ export interface NewUser {
   role: string;
 }
 
+export interface UserUpdate {
+  email?: string;
+  role?: string;
+  password?: string;
+}
+
 export interface TokenOut {
   access_token: string;
   token_type: string;

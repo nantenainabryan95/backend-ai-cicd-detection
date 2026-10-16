@@ -7,6 +7,7 @@ import type {
   BuildRun,
   Finding,
   NewUser,
+  UserUpdate,
   Project,
   QualityGateResult,
   User,
@@ -204,6 +205,16 @@ export function useWorkspace() {
     await loadUsers();
   }
 
+  async function updateUser(id: number, data: UserUpdate) {
+    await api.updateUser(id, data);
+    await loadUsers();
+  }
+
+  async function deleteUser(id: number) {
+    await api.deleteUser(id);
+    await loadUsers();
+  }
+
   return {
     projects,
     project,
@@ -228,6 +239,8 @@ export function useWorkspace() {
     analyze,
     review,
     createUser,
+    updateUser,
+    deleteUser,
   };
 }
 
