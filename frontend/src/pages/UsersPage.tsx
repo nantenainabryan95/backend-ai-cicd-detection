@@ -127,7 +127,7 @@ export default function UsersPage({ ws, user }: { ws: Workspace; user: User }) {
                         <button
                           type="button"
                           className="btn btn-outline btn-sm"
-                          style={{ color: "#a52326", borderColor: "#f3c2c3" }}
+                          style={{ color: "var(--bad)", borderColor: "var(--bad)" }}
                           disabled={u.id === user.id}
                           title={u.id === user.id ? "Vous ne pouvez pas supprimer votre propre compte" : undefined}
                           onClick={() => handleDelete(u)}

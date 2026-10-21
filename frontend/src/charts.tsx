@@ -14,7 +14,7 @@ export function DonutChart({ segments }: { segments: DonutSegment[] }) {
   return (
     <div className="donut-wrap">
       <svg viewBox="0 0 140 140" className="donut" role="img" aria-label="Répartition des vulnérabilités">
-        <circle cx="70" cy="70" r={radius} fill="none" stroke="#eef1f7" strokeWidth="18" />
+        <circle cx="70" cy="70" r={radius} fill="none" style={{ stroke: "var(--line)" }} strokeWidth="18" />
         {total > 0 &&
           segments
             .filter((s) => s.value > 0)
@@ -99,7 +99,7 @@ export function LineChart({ labels, series }: { labels: string[]; series: LineSe
       <svg viewBox={`0 0 ${width} ${height}`} className="line-chart" role="img" aria-label="Évolution des builds">
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={left} x2={width - right} y1={y(t * yMax)} y2={y(t * yMax)} stroke="#e8ecf4" />
+            <line x1={left} x2={width - right} y1={y(t * yMax)} y2={y(t * yMax)} style={{ stroke: "var(--line)" }} />
             <text x={left - 6} y={y(t * yMax) + 3} textAnchor="end" className="axis">
               {Math.round(t * yMax)}
             </text>

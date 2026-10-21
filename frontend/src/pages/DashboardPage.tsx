@@ -36,7 +36,7 @@ export default function DashboardPage({ ws }: { ws: Workspace }) {
   const series = [
     {
       name: "Total findings",
-      color: "#1f6feb",
+      color: "#4f80c6",
       values: recent.map((b) => b.critical + b.high + b.medium + b.low),
     },
     { name: "Bloquantes", color: "#e5383b", values: recent.map((b) => b.blocking) },
