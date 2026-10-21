@@ -112,7 +112,7 @@ export default function DashboardPage({ ws }: { ws: Workspace }) {
                 <th>Build #</th>
                 <th>Commit</th>
                 <th>Date</th>
-                <th>Findings (C / H / M / L)</th>
+                <th title="Critiques / Hautes / Moyennes / Faibles">Findings (C / H / M / L)</th>
                 <th>Quality Gate</th>
               </tr>
             </thead>

@@ -500,3 +500,22 @@ input:disabled { background: var(--surface-2); color: var(--muted); }
   .analysis-actions { flex-direction: row; }
   .detail-head { flex-direction: column; align-items: flex-start; }
 }
+
+/* =========================================================
+   AJUSTEMENTS D'ERGONOMIE
+   ========================================================= */
+
+/* Contenu centré dans l'espace à droite de la barre latérale. */
+.content { margin: 0 auto; }
+
+/* Deux cartes côte à côte : le contenu remplit la hauteur au lieu de laisser un grand vide. */
+.grid-2 > .card { display: flex; flex-direction: column; }
+.grid-2 > .card .donut-wrap { flex: 1; }
+
+/* Contrastes : textes secondaires, repères de graphique, champs de saisie. */
+:root { --faint: #6a7691; --line-strong: #b9c5de; }
+::placeholder { color: #75819b; opacity: 1; }
+.axis { fill: #5b6784; }
+
+/* Anneau de focus visible sur le fond bleu marine. */
+.sidebar :focus-visible { outline-color: #fff; }

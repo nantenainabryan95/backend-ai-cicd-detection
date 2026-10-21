@@ -62,10 +62,12 @@ export interface LineSeries {
   values: number[];
 }
 
-function niceMax(value: number): number {
-  if (value <= 5) return 5;
-  const step = value <= 20 ? 5 : 10;
-  return Math.ceil(value / step) * step;
+/** Échelle à repères ronds (0, 10, 20, 30...) : au plus 5 intervalles. */
+function niceScale(value: number): { max: number; count: number } {
+  const steps = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+  const step = steps.find((s) => Math.ceil(value / s) <= 5) ?? 1000;
+  const count = Math.max(2, Math.ceil(value / step));
+  return { max: step * count, count };
 }
 
 /** Courbes d'évolution (SVG pur). */
@@ -79,11 +81,12 @@ export function LineChart({ labels, series }: { labels: string[]; series: LineSe
   const plotW = width - left - right;
   const plotH = height - top - bottom;
 
-  const yMax = niceMax(Math.max(1, ...series.flatMap((s) => s.values)));
+  const scale = niceScale(Math.max(1, ...series.flatMap((s) => s.values)));
+  const yMax = scale.max;
   const x = (i: number) =>
     left + (labels.length <= 1 ? plotW / 2 : (i * plotW) / (labels.length - 1));
   const y = (v: number) => top + plotH - (v / yMax) * plotH;
-  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const ticks = Array.from({ length: scale.count + 1 }, (_, i) => i / scale.count);
 
   return (
     <div>

@@ -22,7 +22,7 @@ const PAGE_SIZE = 10;
 export default function FindingsPage({ ws }: { ws: Workspace }) {
   const { findings, gate, latestBuild } = ws;
 
-  const [scope, setScope] = useState<Scope>("all");
+  const [scope, setScope] = useState<Scope>("latest");
   const [severity, setSeverity] = useState<Severity | "all">("all");
   const [scanner, setScanner] = useState("all");
   const [query, setQuery] = useState("");
