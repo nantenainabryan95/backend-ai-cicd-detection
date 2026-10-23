@@ -54,6 +54,11 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20'))
     }
 
+    triggers {
+        // Interroge le dépôt Git toutes les 5 minutes environ ; un nouveau commit lance le build.
+        pollSCM('H/5 * * * *')
+    }
+
     parameters {
         string(name: 'VULNSCAN_API',     defaultValue: 'http://host.docker.internal:8000',
                description: "URL de l'API VulnScan, vue depuis Jenkins")
@@ -63,10 +68,10 @@ pipeline {
                description: "Chemin du code à scanner TEL QUE VU PAR L'HÔTE DOCKER (avec des /)")
         string(name: 'MAX_AI_ANALYSES', defaultValue: '10',
                description: "Nb max de findings analysés par l'IA (les plus prioritaires)")
-        string(name: 'MAX_CRITICAL',    defaultValue: '0',
-               description: "Quality Gate : nb max de findings critiques")
-        string(name: 'MAX_HIGH',        defaultValue: '5',
-               description: "Quality Gate : nb max de findings hauts (les secrets Gitleaks sont 'high')")
+        string(name: 'MAX_CRITICAL',    defaultValue: '',
+               description: "Quality Gate : nb max de critiques. Vide = seuil réglé dans VulnScan (page Projets)")
+        string(name: 'MAX_HIGH',        defaultValue: '',
+               description: "Quality Gate : nb max de hauts. Vide = seuil réglé dans VulnScan (page Projets)")
     }
 
     stages {
@@ -179,8 +184,11 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 script {
-                    def url = "${params.VULNSCAN_API}/projects/${params.PROJECT_ID}/quality-gate" +
-                              "?build=${env.BUILD_NUMBER}&max_critical=${params.MAX_CRITICAL}&max_high=${params.MAX_HIGH}&record=true"
+                    // Seuils : ceux du projet dans VulnScan, sauf si un paramètre du job en impose.
+                    def gateQuery = "build=${env.BUILD_NUMBER}&record=true"
+                    if (params.MAX_CRITICAL?.trim()) { gateQuery += "&max_critical=${params.MAX_CRITICAL.trim()}" }
+                    if (params.MAX_HIGH?.trim())     { gateQuery += "&max_high=${params.MAX_HIGH.trim()}" }
+                    def url = "${params.VULNSCAN_API}/projects/${params.PROJECT_ID}/quality-gate?${gateQuery}"
 
                     // On lit le code HTTP nous-mêmes : 200 = passé, 422 = bloqué, autre = erreur technique
                     def code = sh(

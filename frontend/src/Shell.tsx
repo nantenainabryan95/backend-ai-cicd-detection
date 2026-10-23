@@ -32,6 +32,8 @@ interface ShellProps {
 function Shell({ user, onLogout }: ShellProps) {
   // Les développeurs ne peuvent pas valider les analyses (réservé à admin, appsec, tech_lead).
   const canReview = user.role !== "developer";
+  // Les seuils du Quality Gate se règlent par un administrateur ou un responsable technique.
+  const canManageGate = user.role === "admin" || user.role === "tech_lead";
   const ws = useWorkspace();
   const route = useRoute();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -41,7 +43,7 @@ function Shell({ user, onLogout }: ShellProps) {
 
   function page() {
     // Ces pages n'ont pas besoin d'un projet sélectionné.
-    if (section === "projects") return <ProjectsPage ws={ws} />;
+    if (section === "projects") return <ProjectsPage ws={ws} canManageGate={canManageGate} />;
     if (section === "users") return <UsersPage ws={ws} user={user} />;
 
     if (ws.projectId === null) {

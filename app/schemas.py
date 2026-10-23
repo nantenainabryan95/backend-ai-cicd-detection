@@ -105,6 +105,50 @@ class FindingOut(BaseModel):
 # QUALITY GATE
 # =============================================================================
 
+class FindingDecisionIn(BaseModel):
+    """Décision finale d'un analyste sur une vulnérabilité."""
+
+    decision: str
+
+    reason: str
+
+
+class FindingDecisionOut(BaseModel):
+    id: int
+
+    finding_id: int
+
+    decision: str
+
+    reason: str
+
+    previous_status: str | None = None
+
+    decided_by: int | None = None
+
+    decided_by_name: str | None = None
+
+    created_at: datetime
+
+
+class GateSettingsIn(BaseModel):
+    max_critical: int
+
+    max_high: int
+
+
+class GateSettingsOut(BaseModel):
+    max_critical: int
+
+    max_high: int
+
+    is_default: bool
+
+    updated_at: datetime | None = None
+
+    updated_by: str | None = None
+
+
 class QualityGateOut(BaseModel):
     """
     Résultat du Quality Gate Jenkins.

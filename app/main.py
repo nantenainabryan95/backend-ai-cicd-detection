@@ -22,6 +22,7 @@ import jwt
 from app.database import get_db, engine
 from app import models, schemas
 from app.models_builds import BuildRun
+from app.models_decisions import FindingDecision, QualityGateSetting
 from app.auth import hash_password, verify_password, create_access_token, decode_access_token
 
 from app.scanners.trivy import (
@@ -68,6 +69,8 @@ async def lifespan(_: FastAPI):
         )
 
     BuildRun.__table__.create(bind=engine, checkfirst=True)
+    FindingDecision.__table__.create(bind=engine, checkfirst=True)
+    QualityGateSetting.__table__.create(bind=engine, checkfirst=True)
     yield
 
 
@@ -157,6 +160,24 @@ def require_reviewer(
         raise HTTPException(
             status_code=403,
             detail="La validation des analyses est réservée aux rôles admin, appsec et tech_lead.",
+        )
+    return current_user
+
+
+GATE_MANAGER_ROLES = {
+    models.UserRole.ADMIN,
+    models.UserRole.TECH_LEAD,
+}
+
+
+def require_gate_manager(
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    """Réserve le réglage des seuils du Quality Gate aux rôles admin et tech_lead (403 sinon)."""
+    if current_user.role not in GATE_MANAGER_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Le réglage des seuils est réservé aux rôles admin et tech_lead.",
         )
     return current_user
 
@@ -675,8 +696,8 @@ def _record_build(
 def quality_gate(
     project_id: int,
     build: int | None = None,        # ?build=N : seulement ce qui a été vu au build N
-    max_critical: int = 0,           # nombre de critiques tolérés
-    max_high: int | None = None,     # nombre de "high" tolérés (None = non vérifié)
+    max_critical: int | None = None,  # None = seuil enregistré pour le projet
+    max_high: int | None = None,      # None = seuil enregistré pour le projet
     record: bool = False,            # True (Jenkins) : enregistre un instantané du build
     db: Session = Depends(get_db),
 ):
@@ -693,6 +714,13 @@ def quality_gate(
         db,
         project_id,
     )
+
+    # Seuils : ceux du projet (réglables dans l'interface), sauf si l'appelant en impose.
+    seuil_critique, seuil_haut, _ = _gate_thresholds(db, projet.id)
+    if max_critical is not None:
+        seuil_critique = max_critical
+    if max_high is not None:
+        seuil_haut = max_high
 
     non_blocking_statuses = [
         models.FindingStatus.FIXED,
@@ -728,12 +756,12 @@ def quality_gate(
     raisons = []
     bloquants = []
 
-    if len(critiques) > max_critical:
-        raisons.append(f"{len(critiques)} critique(s) (max {max_critical})")
+    if len(critiques) > seuil_critique:
+        raisons.append(f"{len(critiques)} critique(s) (max {seuil_critique})")
         bloquants += critiques
 
-    if max_high is not None and len(hauts) > max_high:
-        raisons.append(f"{len(hauts)} haute(s) (max {max_high})")
+    if len(hauts) > seuil_haut:
+        raisons.append(f"{len(hauts)} haute(s) (max {seuil_haut})")
         bloquants += hauts
 
     # Historique : Jenkins demande d'enregistrer le résultat de CE build.
@@ -764,6 +792,174 @@ def quality_gate(
         message="Quality Gate réussi : seuils respectés.",
         blocking_findings=0,
     )
+
+
+# =============================================================================
+# SEUILS DU QUALITY GATE (réglables par projet)
+# =============================================================================
+
+DEFAULT_MAX_CRITICAL = 0
+DEFAULT_MAX_HIGH = 5
+
+
+def _gate_thresholds(db: Session, project_id: int):
+    """Seuils du projet : (max_critical, max_high, réglage ou None s'il n'a jamais été modifié)."""
+    reglage = db.get(QualityGateSetting, project_id)
+    if reglage is None:
+        return DEFAULT_MAX_CRITICAL, DEFAULT_MAX_HIGH, None
+    return reglage.max_critical, reglage.max_high, reglage
+
+
+def _gate_settings_out(db: Session, project_id: int) -> schemas.GateSettingsOut:
+    max_critical, max_high, reglage = _gate_thresholds(db, project_id)
+    auteur = None
+    if reglage is not None and reglage.updated_by is not None:
+        utilisateur = db.get(models.User, reglage.updated_by)
+        auteur = utilisateur.username if utilisateur else None
+    return schemas.GateSettingsOut(
+        max_critical=max_critical,
+        max_high=max_high,
+        is_default=reglage is None,
+        updated_at=reglage.updated_at if reglage is not None else None,
+        updated_by=auteur,
+    )
+
+
+@app.get(
+    "/projects/{project_id}/quality-gate/settings",
+    dependencies=[Depends(get_current_user)],
+    response_model=schemas.GateSettingsOut,
+)
+def get_gate_settings(
+    project_id: int,
+    db: Session = Depends(get_db),
+):
+    projet = _get_project_or_error(db, project_id)
+    return _gate_settings_out(db, projet.id)
+
+
+@app.put(
+    "/projects/{project_id}/quality-gate/settings",
+    response_model=schemas.GateSettingsOut,
+)
+def update_gate_settings(
+    project_id: int,
+    payload: schemas.GateSettingsIn,
+    db: Session = Depends(get_db),
+    manager: models.User = Depends(require_gate_manager),
+):
+    projet = _get_project_or_error(db, project_id)
+
+    for valeur in (payload.max_critical, payload.max_high):
+        if valeur < 0 or valeur > 1000:
+            raise HTTPException(
+                status_code=422,
+                detail="Les seuils doivent être des entiers compris entre 0 et 1000.",
+            )
+
+    reglage = db.get(QualityGateSetting, projet.id)
+    if reglage is None:
+        reglage = QualityGateSetting(project_id=projet.id)
+        db.add(reglage)
+
+    reglage.max_critical = payload.max_critical
+    reglage.max_high = payload.max_high
+    reglage.updated_by = manager.id
+
+    db.commit()
+    return _gate_settings_out(db, projet.id)
+
+
+# =============================================================================
+# DÉCISION FINALE DE L'ANALYSTE
+# =============================================================================
+
+DECISION_TO_STATUS = {
+    "faux_positif": models.FindingStatus.FALSE_POSITIVE,    # ne bloque plus
+    "risque_accepte": models.FindingStatus.ACCEPTED_RISK,   # ne bloque plus
+    "confirme": models.FindingStatus.CONFIRMED,             # continue de bloquer
+    "rouvert": models.FindingStatus.NEW,                    # remis à l'étude, continue de bloquer
+}
+
+
+@app.patch(
+    "/findings/{finding_id}/decision",
+    response_model=schemas.FindingOut,
+)
+def decide_finding(
+    finding_id: int,
+    payload: schemas.FindingDecisionIn,
+    db: Session = Depends(get_db),
+    reviewer: models.User = Depends(require_reviewer),
+):
+    """
+    L'analyste fixe lui-même le statut d'une vulnérabilité, avec une justification obligatoire.
+    Chaque décision est conservée dans un journal (qui, quand, pourquoi, ancien statut).
+    """
+    finding = db.get(models.Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status_code=404, detail=f"Aucun finding avec l'id {finding_id}.")
+
+    nouveau_statut = DECISION_TO_STATUS.get(payload.decision)
+    if nouveau_statut is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Décision invalide. Valeurs : " + ", ".join(DECISION_TO_STATUS),
+        )
+
+    justification = payload.reason.strip()
+    if len(justification) < 5:
+        raise HTTPException(
+            status_code=422,
+            detail="La justification est obligatoire (5 caractères minimum).",
+        )
+
+    db.add(
+        FindingDecision(
+            finding_id=finding.id,
+            decided_by=reviewer.id,
+            decision=payload.decision,
+            reason=justification,
+            previous_status=finding.status.value,
+        )
+    )
+    finding.status = nouveau_statut
+
+    db.commit()
+    db.refresh(finding)
+    return finding
+
+
+@app.get(
+    "/findings/{finding_id}/decisions",
+    dependencies=[Depends(get_current_user)],
+    response_model=list[schemas.FindingDecisionOut],
+)
+def list_finding_decisions(
+    finding_id: int,
+    db: Session = Depends(get_db),
+):
+    lignes = (
+        db.query(FindingDecision)
+        .filter(FindingDecision.finding_id == finding_id)
+        .order_by(FindingDecision.created_at.desc(), FindingDecision.id.desc())
+        .all()
+    )
+    noms = {u.id: u.username for u in db.query(models.User).all()}
+
+    return [
+        schemas.FindingDecisionOut(
+            id=ligne.id,
+            finding_id=ligne.finding_id,
+            decision=ligne.decision,
+            reason=ligne.reason,
+            previous_status=ligne.previous_status,
+            decided_by=ligne.decided_by,
+            decided_by_name=noms.get(ligne.decided_by),
+            created_at=ligne.created_at,
+        )
+        for ligne in lignes
+    ]
 
 
 # =============================================================================
@@ -1125,6 +1321,12 @@ def delete_user(
     # La clé étrangère reviewed_by empêcherait la suppression : on détache d'abord les validations.
     db.query(models.AIAnalysis).filter(models.AIAnalysis.reviewed_by == user_id).update(
         {"reviewed_by": None}
+    )
+    db.query(FindingDecision).filter(FindingDecision.decided_by == user_id).update(
+        {"decided_by": None}
+    )
+    db.query(QualityGateSetting).filter(QualityGateSetting.updated_by == user_id).update(
+        {"updated_by": None}
     )
     db.delete(utilisateur)
     db.commit()

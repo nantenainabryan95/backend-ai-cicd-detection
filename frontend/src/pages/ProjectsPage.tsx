@@ -1,12 +1,113 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
+import { errorMessage } from "../api";
 import { PageHeader } from "../components";
 import { Icon } from "../icons";
 import { navigate } from "../router";
 import type { Workspace } from "../useWorkspace";
+import { formatDate } from "../ui";
 
-export default function ProjectsPage({ ws }: { ws: Workspace }) {
+/** Seuils de tolérance du Quality Gate pour le projet ouvert. */
+function GateSettingsCard({ ws, canManage }: { ws: Workspace; canManage: boolean }) {
+  const [maxCritical, setMaxCritical] = useState("0");
+  const [maxHigh, setMaxHigh] = useState("5");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (ws.gateSettings) {
+      setMaxCritical(String(ws.gateSettings.max_critical));
+      setMaxHigh(String(ws.gateSettings.max_high));
+    }
+  }, [ws.gateSettings]);
+
+  if (!ws.project) return null;
+
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    setSaved(false);
+
+    const critical = Number(maxCritical);
+    const high = Number(maxHigh);
+    if (!Number.isInteger(critical) || !Number.isInteger(high) || critical < 0 || high < 0) {
+      setFormError("Les seuils doivent être des nombres entiers positifs ou nuls.");
+      return;
+    }
+
+    setSaving(true);
+    setFormError(null);
+    try {
+      await ws.saveGateSettings(critical, high);
+      setSaved(true);
+    } catch (err) {
+      setFormError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const info = ws.gateSettings;
+
+  return (
+    <form className="card" onSubmit={handleSave} style={{ marginBottom: 22 }}>
+      <h2 className="card-title">Seuils du Quality Gate · {ws.project.name}</h2>
+      <p className="muted">
+        Le build est bloqué lorsque le nombre de vulnérabilités ouvertes dépasse ces seuils. Un paramètre
+        renseigné dans le job Jenkins reste prioritaire sur ces valeurs.
+      </p>
+
+      <div className="grid-2" style={{ marginTop: 6 }}>
+        <div>
+          <label htmlFor="gate-critical">Critiques tolérées au maximum</label>
+          <input
+            id="gate-critical"
+            type="number"
+            min={0}
+            value={maxCritical}
+            disabled={!canManage}
+            onChange={(e) => setMaxCritical(e.target.value)}
+          />
+        </div>
+        <div>
+          <label htmlFor="gate-high">Hautes tolérées au maximum</label>
+          <input
+            id="gate-high"
+            type="number"
+            min={0}
+            value={maxHigh}
+            disabled={!canManage}
+            onChange={(e) => setMaxHigh(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {formError && <div className="form-error">{formError}</div>}
+      {saved && <div className="notice">Seuils enregistrés. Le Quality Gate a été recalculé.</div>}
+
+      <p className="muted small" style={{ marginTop: 12 }}>
+        {info?.is_default
+          ? "Valeurs par défaut : aucun réglage enregistré pour ce projet."
+          : info?.updated_at
+            ? `Dernière modification : ${formatDate(info.updated_at)}${info.updated_by ? ` par ${info.updated_by}` : ""}.`
+            : ""}
+      </p>
+
+      {canManage ? (
+        <div className="btn-row end">
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            {saving ? "Enregistrement..." : "Enregistrer les seuils"}
+          </button>
+        </div>
+      ) : (
+        <p className="notice">Seuls un administrateur ou un responsable technique peuvent modifier ces seuils.</p>
+      )}
+    </form>
+  );
+}
+
+export default function ProjectsPage({ ws, canManageGate }: { ws: Workspace; canManageGate: boolean }) {
   const [name, setName] = useState("");
   const [repo, setRepo] = useState("");
 
@@ -29,6 +130,8 @@ export default function ProjectsPage({ ws }: { ws: Workspace }) {
   return (
     <>
       <PageHeader title="Projets" subtitle="Les projets suivis par VulnScan" />
+
+      <GateSettingsCard ws={ws} canManage={canManageGate} />
 
       <section className="project-grid">
         {ws.projects.map((p) => (

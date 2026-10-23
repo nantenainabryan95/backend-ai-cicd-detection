@@ -7,6 +7,8 @@ import type {
   BuildRun,
   Finding,
   NewUser,
+  DecisionKind,
+  GateSettings,
   UserUpdate,
   Project,
   QualityGateResult,
@@ -17,9 +19,6 @@ import type {
  * Seuils du Quality Gate affichés dans l'interface.
  * À garder identiques aux paramètres du Jenkinsfile (MAX_CRITICAL / MAX_HIGH).
  */
-export const GATE_MAX_CRITICAL = 0;
-export const GATE_MAX_HIGH = 5;
-
 const PROJECT_KEY = "vulnscan_project";
 
 /**
@@ -34,6 +33,7 @@ export function useWorkspace() {
   const [builds, setBuilds] = useState<BuildRun[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [gate, setGate] = useState<QualityGateResult | null>(null);
+  const [gateSettings, setGateSettings] = useState<GateSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,24 +43,24 @@ export function useWorkspace() {
     setError(null);
 
     try {
-      const [f, a, b] = await Promise.all([
+      const [f, a, b, s] = await Promise.all([
         api.listFindings(id),
         api.listProjectAnalyses(id),
         api.listBuilds(id),
+        api.getGateSettings(id).catch(() => null),
       ]);
 
       f.sort((x, y) => (y.priority_score ?? 0) - (x.priority_score ?? 0));
       setFindings(f);
       setAnalyses(a);
       setBuilds(b);
+      setGateSettings(s);
 
       const latest = latestBuildOf(f);
       try {
         setGate(
           await api.getQualityGate(id, {
             build: latest ?? undefined,
-            maxCritical: GATE_MAX_CRITICAL,
-            maxHigh: GATE_MAX_HIGH,
           })
         );
       } catch (e) {
@@ -81,6 +81,7 @@ export function useWorkspace() {
       setAnalyses([]);
       setBuilds([]);
       setGate(null);
+      setGateSettings(null);
       try {
         localStorage.setItem(PROJECT_KEY, String(id));
       } catch {
@@ -215,6 +216,18 @@ export function useWorkspace() {
     await loadUsers();
   }
 
+  /** Lève une erreur en cas d'échec ; recharge tout, car la décision peut débloquer le Quality Gate. */
+  async function decideFinding(findingId: number, decision: DecisionKind, reason: string) {
+    await api.decideFinding(findingId, { decision, reason });
+    if (projectId !== null) await refresh(projectId);
+  }
+
+  async function saveGateSettings(maxCritical: number, maxHigh: number) {
+    if (projectId === null) return;
+    await api.saveGateSettings(projectId, { max_critical: maxCritical, max_high: maxHigh });
+    await refresh(projectId);
+  }
+
   return {
     projects,
     project,
@@ -241,6 +254,9 @@ export function useWorkspace() {
     createUser,
     updateUser,
     deleteUser,
+    gateSettings,
+    decideFinding,
+    saveGateSettings,
   };
 }
 

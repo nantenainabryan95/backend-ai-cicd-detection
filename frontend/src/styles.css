@@ -113,11 +113,12 @@ code { font-family: var(--mono); }
 
 label { display: block; margin: 16px 0 6px; font-size: 13px; font-weight: 600; color: var(--text); }
 
-input, select {
+input, select, textarea {
   width: 100%; padding: 11px 13px; border: 1px solid var(--line-strong); border-radius: 12px;
   background: var(--surface); outline: none; font-size: 14px;
 }
-input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea { min-height: 88px; resize: vertical; line-height: 1.5; }
 input:disabled { background: var(--surface-2); color: var(--muted); }
 
 .mono-input { font-family: var(--mono); font-size: 12.5px; margin: 10px 0 12px; }

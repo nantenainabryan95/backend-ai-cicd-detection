@@ -6,6 +6,9 @@ import type {
   User,
   NewUser,
   UserUpdate,
+  DecisionKind,
+  FindingDecision,
+  GateSettings,
   AnalysisDetail,
   BuildRun,
   TokenOut,
@@ -184,6 +187,22 @@ export const api = {
 
   deleteUser: (id: number) =>
     request<{ detail: string }>(`/users/${id}`, { method: "DELETE" }),
+
+  /* ---------------- DÉCISIONS ET SEUILS ---------------- */
+
+  decideFinding: (id: number, data: { decision: DecisionKind; reason: string }) =>
+    request<Finding>(`/findings/${id}/decision`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  listDecisions: (id: number) => request<FindingDecision[]>(`/findings/${id}/decisions`),
+
+  getGateSettings: (projectId: number) =>
+    request<GateSettings>(`/projects/${projectId}/quality-gate/settings`),
+
+  saveGateSettings: (projectId: number, data: { max_critical: number; max_high: number }) =>
+    request<GateSettings>(`/projects/${projectId}/quality-gate/settings`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
 
   /* ---------------- PROJETS ---------------- */
 

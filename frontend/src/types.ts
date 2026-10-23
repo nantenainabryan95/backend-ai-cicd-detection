@@ -85,6 +85,27 @@ export interface UserUpdate {
   password?: string;
 }
 
+export type DecisionKind = "faux_positif" | "risque_accepte" | "confirme" | "rouvert";
+
+export interface FindingDecision {
+  id: number;
+  finding_id: number;
+  decision: DecisionKind;
+  reason: string;
+  previous_status: string | null;
+  decided_by: number | null;
+  decided_by_name: string | null;
+  created_at: string;
+}
+
+export interface GateSettings {
+  max_critical: number;
+  max_high: number;
+  is_default: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
 export interface TokenOut {
   access_token: string;
   token_type: string;

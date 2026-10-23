@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
+
+import { api, errorMessage } from "../api";
 
 import { EmptyState, ReviewPill, SeverityPill, Tabs, VerdictPill } from "../components";
 import { Icon } from "../icons";
@@ -12,7 +15,7 @@ import {
   label,
   shortSha,
 } from "../ui";
-import type { AnalysisDetail, Finding } from "../types";
+import type { AnalysisDetail, DecisionKind, Finding, FindingDecision } from "../types";
 import type { Workspace } from "../useWorkspace";
 
 function YesNo({ value }: { value: boolean }) {
@@ -129,6 +132,127 @@ function AnalysisView({
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+const DECISION_LABELS: Record<DecisionKind, string> = {
+  faux_positif: "Faux positif",
+  risque_accepte: "Risque accepté",
+  confirme: "Menace confirmée",
+  rouvert: "Remis à l'étude",
+};
+
+/** Décision finale de l'analyste et journal des décisions de cette vulnérabilité. */
+function DecisionPanel({
+  finding,
+  ws,
+  canReview,
+}: {
+  finding: Finding;
+  ws: Workspace;
+  canReview: boolean;
+}) {
+  const [decisions, setDecisions] = useState<FindingDecision[]>([]);
+  const [decision, setDecision] = useState<DecisionKind>("faux_positif");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const loadDecisions = useCallback(async () => {
+    try {
+      setDecisions(await api.listDecisions(finding.id));
+    } catch {
+      // le journal est une information secondaire : on n'interrompt pas la page
+    }
+  }, [finding.id]);
+
+  useEffect(() => {
+    loadDecisions();
+  }, [loadDecisions]);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+
+    if (reason.trim().length < 5) {
+      setFormError("La justification est obligatoire (5 caractères minimum).");
+      return;
+    }
+
+    setSaving(true);
+    setFormError(null);
+    try {
+      await ws.decideFinding(finding.id, decision, reason.trim());
+      setReason("");
+      await loadDecisions();
+    } catch (err) {
+      setFormError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="card">
+      <h2 className="card-title">Décision de l'analyste</h2>
+
+      {canReview ? (
+        <form onSubmit={handleSubmit}>
+          <p className="muted">
+            Le statut actuel est « {label(STATUS_LABELS, finding.status)} ». Les décisions « Faux positif » et
+            « Risque accepté » ne bloquent plus le Quality Gate ; « Menace confirmée » et « Remis à l'étude »
+            continuent de le bloquer.
+          </p>
+
+          <label htmlFor="decision-kind">Décision</label>
+          <select id="decision-kind" value={decision} onChange={(e) => setDecision(e.target.value as DecisionKind)}>
+            <option value="faux_positif">Faux positif (ne bloque plus)</option>
+            <option value="risque_accepte">Risque accepté (ne bloque plus)</option>
+            <option value="confirme">Menace confirmée (continue de bloquer)</option>
+            <option value="rouvert">Remettre à l'étude (continue de bloquer)</option>
+          </select>
+
+          <label htmlFor="decision-reason">Justification (obligatoire)</label>
+          <textarea
+            id="decision-reason"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Expliquez la raison de cette décision."
+          />
+
+          {formError && <div className="form-error">{formError}</div>}
+
+          <div className="btn-row end">
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? "Enregistrement..." : "Enregistrer la décision"}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <p className="notice">Seuls les rôles admin, appsec et tech_lead peuvent décider du statut d'une vulnérabilité.</p>
+      )}
+
+      <h3 className="mini-title" style={{ marginTop: 22 }}>Journal des décisions</h3>
+      {decisions.length === 0 ? (
+        <p className="muted">Aucune décision manuelle pour cette vulnérabilité.</p>
+      ) : (
+        <ul className="timeline">
+          {decisions.map((d) => (
+            <li key={d.id}>
+              <span className="timeline-dot" />
+              <div>
+                <strong>{DECISION_LABELS[d.decision] ?? d.decision}</strong>
+                <span className="muted">
+                  {" "}
+                  · {formatDate(d.created_at)} · {d.decided_by_name ?? "compte supprimé"}
+                  {d.previous_status ? ` · ancien statut : ${label(STATUS_LABELS, d.previous_status)}` : ""}
+                </span>
+                <p className="prose" style={{ marginTop: 4 }}>{d.reason}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -254,6 +378,8 @@ export default function FindingDetailPage({
               {analysis ? "Voir l'analyse complète" : "Analyser"}
             </button>
           </section>
+
+          <DecisionPanel finding={finding} ws={ws} canReview={canReview} />
         </>
       )}
 
