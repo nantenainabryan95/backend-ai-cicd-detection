@@ -789,7 +789,10 @@ def quality_gate(
 
     return schemas.QualityGateOut(
         passed=True,
-        message="Quality Gate réussi : seuils respectés.",
+        message=(
+            f"Quality Gate réussi : {len(critiques)} critique(s) (max {seuil_critique}), "
+            f"{len(hauts)} haute(s) (max {seuil_haut})."
+        ),
         blocking_findings=0,
     )
 
