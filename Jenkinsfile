@@ -38,8 +38,15 @@ def api(String method, String path, String body = null) {
     return resp
 }
 
+// Chemin du code à scanner, tel que vu par la machine qui exécute Docker.
+// Ordre : paramètre du build, puis variable VULNSCAN_TARGET_PATH définie dans Jenkins,
+// puis dossier de travail du build (valable lorsque Jenkins et l'API partagent le même chemin).
+def targetPath() {
+    return (params.TARGET_PATH ?: '').trim() ?: (env.VULNSCAN_TARGET_PATH ?: env.WORKSPACE)
+}
+
 def scanBody() {
-    return """{"target_path":"${params.TARGET_PATH}","jenkins_build_number":${env.BUILD_NUMBER},"git_commit_sha":"${env.GIT_SHA}"}"""
+    return """{"target_path":"${targetPath()}","jenkins_build_number":${env.BUILD_NUMBER},"git_commit_sha":"${env.GIT_SHA}"}"""
 }
 
 // ---- Pipeline ---------------------------------------------------------------
@@ -64,8 +71,8 @@ pipeline {
                description: "URL de l'API VulnScan, vue depuis Jenkins")
         string(name: 'PROJECT_ID',       defaultValue: '1',
                description: "Id du projet dans VulnScan")
-        string(name: 'TARGET_PATH',      defaultValue: 'C:/Users/Bryan/tp_jenkins/jenkins_simple/jenkins_data/workspace/vulnscan',
-               description: "Chemin du code à scanner TEL QUE VU PAR L'HÔTE DOCKER (avec des /)")
+        string(name: 'TARGET_PATH',      defaultValue: '',
+               description: "Chemin du code à scanner TEL QUE VU PAR L'HÔTE DOCKER (avec des /). Vide = variable VULNSCAN_TARGET_PATH de Jenkins, sinon dossier de travail du build")
         string(name: 'MAX_AI_ANALYSES', defaultValue: '10',
                description: "Nb max de findings analysés par l'IA (les plus prioritaires)")
         string(name: 'MAX_CRITICAL',    defaultValue: '',
