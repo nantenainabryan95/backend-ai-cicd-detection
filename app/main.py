@@ -16,6 +16,8 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+import os
+
 import requests
 import jwt
 
@@ -88,10 +90,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -412,6 +411,24 @@ def _sync_finding_status(
 # SCAN TRIVY
 # =============================================================================
 
+def _check_target_path(target_path: str) -> None:
+    """
+    Refuse de scanner un dossier introuvable ou vide pour l'API. Sans cette
+    vérification, un mauvais chemin donnerait 0 vulnérabilité et le Quality
+    Gate passerait à tort.
+    """
+    if not os.path.isdir(target_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dossier à scanner introuvable pour l'API : {target_path}",
+        )
+    if not any(os.scandir(target_path)):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dossier à scanner vide : {target_path}",
+        )
+
+
 @app.post(
     "/projects/{project_id}/scan/trivy",
     dependencies=[Depends(get_current_user)],
@@ -426,6 +443,8 @@ def scan_project_with_trivy(
         db,
         project_id,
     )
+
+    _check_target_path(payload.target_path)
 
     try:
         raw_results = run_trivy_scan(
@@ -470,6 +489,8 @@ def scan_project_with_semgrep(
         project_id,
     )
 
+    _check_target_path(payload.target_path)
+
     try:
         raw_results = run_semgrep_scan(
             payload.target_path
@@ -512,6 +533,8 @@ def scan_project_with_gitleaks(
         db,
         project_id,
     )
+
+    _check_target_path(payload.target_path)
 
     try:
         raw_results = run_gitleaks_scan(

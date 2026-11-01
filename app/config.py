@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     llm_model: str = "llama-3.3-70b-versatile"
     jwt_secret: str = "change-me"
 
+    # Adresses autorisées à appeler l'API depuis un navigateur, séparées par des virgules.
+    # Variable d'environnement : CORS_ORIGINS
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     # Cette classe interne dit à pydantic où aller chercher le fichier .env
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
