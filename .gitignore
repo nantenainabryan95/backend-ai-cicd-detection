@@ -7,3 +7,6 @@ dist/
 .auth-header
 api-response.tmp
 gate.json
+# Secrets de production
+.env.*
+!.env.prod.example
