@@ -5,6 +5,7 @@ import { errorMessage } from "../api";
 import { PageHeader } from "../components";
 import { Icon } from "../icons";
 import { navigate } from "../router";
+import type { Project } from "../types";
 import type { Workspace } from "../useWorkspace";
 import { formatDate } from "../ui";
 
@@ -107,68 +108,148 @@ function GateSettingsCard({ ws, canManage }: { ws: Workspace; canManage: boolean
   );
 }
 
-export default function ProjectsPage({ ws, canManageGate }: { ws: Workspace; canManageGate: boolean }) {
+export default function ProjectsPage({
+  ws,
+  canManageGate,
+  isAdmin,
+}: {
+  ws: Workspace;
+  canManageGate: boolean;
+  isAdmin: boolean;
+}) {
+  const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [repo, setRepo] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  function closeModal() {
+    setOpen(false);
+    setName("");
+    setRepo("");
+    setFormError(null);
+  }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
 
     if (!name.trim()) {
-      ws.setError("Le nom du projet est obligatoire.");
+      setFormError("Le nom du projet est obligatoire.");
       return;
     }
 
-    const created = await ws.createProject(name.trim(), repo.trim());
-    if (created) {
-      setName("");
-      setRepo("");
+    setSaving(true);
+    setFormError(null);
+    try {
+      await ws.createProject(name.trim(), repo.trim());
+      closeModal();
       navigate("/dashboard");
+    } catch (err) {
+      setFormError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(p: Project) {
+    const avertissement =
+      p.id === 1
+        ? "\n\nAttention : le projet n°1 est celui que Jenkins utilise par défaut (paramètre PROJECT_ID)."
+        : "";
+    const message =
+      `Supprimer le projet « ${p.name} » ?\n\n` +
+      "Ses vulnérabilités, analyses IA, décisions et builds seront effacés définitivement." +
+      avertissement;
+    if (!window.confirm(message)) return;
+
+    setActionError(null);
+    try {
+      await ws.deleteProject(p.id);
+    } catch (err) {
+      setActionError(errorMessage(err));
     }
   }
 
   return (
     <>
-      <PageHeader title="Projets" subtitle="Les projets suivis par VulnScan" />
+      <PageHeader
+        title="Projets"
+        subtitle="Les projets suivis par VulnScan"
+        actions={
+          <button type="button" className="btn btn-primary" onClick={() => setOpen(true)}>
+            <Icon name="plus" size={15} /> Nouveau projet
+          </button>
+        }
+      />
 
       <GateSettingsCard ws={ws} canManage={canManageGate} />
 
+      {actionError && <div className="form-error" style={{ marginBottom: 16 }}>{actionError}</div>}
+
       <section className="project-grid">
-        {ws.projects.map((p) => (
-          <article key={p.id} className={`card project-card ${p.id === ws.projectId ? "current" : ""}`}>
-            <div className="project-icon">
-              <Icon name="folder" size={20} />
-            </div>
-            <h3>{p.name}</h3>
-            <p className="muted ellipsis">{p.repository_url || "Aucun dépôt renseigné"}</p>
+        {ws.projects.map((p) => {
+          const current = p.id === ws.projectId;
+          return (
+            <article key={p.id} className={`card project-card ${current ? "current" : ""}`}>
+              <div className="project-icon">
+                <Icon name="folder" size={20} />
+              </div>
+              <h3>{p.name}</h3>
+              <p className="muted ellipsis">{p.repository_url || "Aucun dépôt renseigné"}</p>
 
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                ws.selectProject(p.id);
-                navigate("/dashboard");
-              }}
-            >
-              {p.id === ws.projectId ? "Projet actuel" : "Ouvrir"}
-            </button>
-          </article>
-        ))}
+              <div className="btn-row" style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    ws.selectProject(p.id);
+                    navigate("/dashboard");
+                  }}
+                >
+                  {current ? "Projet actuel" : "Ouvrir"}
+                </button>
 
-        <form className="card project-card new" onSubmit={handleCreate}>
-          <h3>Nouveau projet</h3>
-
-          <label htmlFor="project-name">Nom du projet</label>
-          <input id="project-name" value={name} onChange={(e) => setName(e.target.value)} />
-
-          <label htmlFor="project-repo">URL du dépôt</label>
-          <input id="project-repo" value={repo} onChange={(e) => setRepo(e.target.value)} />
-
-          <button type="submit" className="btn btn-primary">
-            <Icon name="plus" size={15} /> Créer un projet
-          </button>
-        </form>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    style={{ color: "var(--bad)", borderColor: "var(--bad)" }}
+                    disabled={current}
+                    title={current ? "Ouvrez un autre projet pour pouvoir supprimer celui-ci" : undefined}
+                    onClick={() => handleDelete(p)}
+                  >
+                    Supprimer
+                  </button>
+                )}
+              </div>
+            </article>
+          );
+        })}
       </section>
+
+      {open && (
+        <div className="modal-backdrop" onClick={closeModal}>
+          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleCreate}>
+            <h2>Nouveau projet</h2>
+
+            {formError && <div className="form-error">{formError}</div>}
+
+            <label htmlFor="project-name">Nom du projet</label>
+            <input id="project-name" value={name} onChange={(e) => setName(e.target.value)} />
+
+            <label htmlFor="project-repo">URL du dépôt</label>
+            <input id="project-repo" value={repo} onChange={(e) => setRepo(e.target.value)} />
+
+            <div className="btn-row end">
+              <button type="button" className="btn btn-outline" onClick={closeModal}>Annuler</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>
+                {saving ? "Création..." : "Créer"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </>
   );
 }

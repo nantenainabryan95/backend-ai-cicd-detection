@@ -268,4 +268,4 @@ export default function FindingsPage({ ws }: { ws: Workspace }) {
       </section>
     </>
   );
-}
+} 

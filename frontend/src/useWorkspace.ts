@@ -170,17 +170,20 @@ export function useWorkspace() {
     }
   }
 
+  /** Lève une erreur en cas d'échec : le formulaire l'affiche lui-même. */
   async function createProject(name: string, repositoryUrl: string) {
-    setError(null);
-    try {
-      const created = await api.createProject(name, repositoryUrl);
-      setProjects((prev) => [...prev, created]);
-      await selectProject(created.id);
-      return created;
-    } catch (e) {
-      setError(errorMessage(e));
-      return null;
-    }
+    const created = await api.createProject(name, repositoryUrl);
+    setProjects((prev) => [...prev, created]);
+    await selectProject(created.id);
+    return created;
+  }
+
+  /** Supprime un projet ; si c'était le projet ouvert, ouvre un autre projet. */
+  async function deleteProject(id: number) {
+    await api.deleteProject(id);
+    const restants = projects.filter((p) => p.id !== id);
+    setProjects(restants);
+    if (id === projectId && restants[0]) await selectProject(restants[0].id);
   }
 
   const runScan = (scanner: "trivy" | "semgrep" | "gitleaks", path: string) =>
@@ -247,6 +250,7 @@ export function useWorkspace() {
     userNames,
     selectProject,
     createProject,
+    deleteProject,
     runScan,
     runScoring,
     analyze,

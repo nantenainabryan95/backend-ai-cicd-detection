@@ -208,6 +208,9 @@ export const api = {
 
   listProjects: () => request<Project[]>("/projects"),
 
+  deleteProject: (id: number) =>
+    request<{ detail: string; findings_deleted: number }>(`/projects/${id}`, { method: "DELETE" }),
+
   createProject: (name: string, repository_url: string) =>
     request<Project>("/projects", {
       method: "POST",

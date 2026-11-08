@@ -43,7 +43,7 @@ function Shell({ user, onLogout }: ShellProps) {
 
   function page() {
     // Ces pages n'ont pas besoin d'un projet sélectionné.
-    if (section === "projects") return <ProjectsPage ws={ws} canManageGate={canManageGate} />;
+    if (section === "projects") return <ProjectsPage ws={ws} canManageGate={canManageGate} isAdmin={user.role === "admin"} />;
     if (section === "users") return <UsersPage ws={ws} user={user} />;
 
     if (ws.projectId === null) {
