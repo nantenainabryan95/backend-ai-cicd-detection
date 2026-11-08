@@ -272,6 +272,51 @@ def list_projects(
     return db.query(models.Project).all()
 
 
+@app.delete("/projects/{project_id}")
+def delete_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """
+    Supprime un projet et tout ce qui lui appartient : vulnérabilités, analyses IA,
+    décisions de l'analyste, historique des builds et réglage des seuils.
+    Réservé aux administrateurs ; le dernier projet ne peut pas être supprimé.
+    """
+    projet = _get_project_or_error(db, project_id)
+
+    if db.query(models.Project).count() <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Impossible de supprimer le dernier projet.",
+        )
+
+    ids = [
+        ligne[0]
+        for ligne in db.query(models.Finding.id).filter(models.Finding.project_id == projet.id)
+    ]
+
+    if ids:
+        db.query(FindingDecision).filter(FindingDecision.finding_id.in_(ids)).delete(
+            synchronize_session=False
+        )
+        db.query(models.AIAnalysis).filter(models.AIAnalysis.finding_id.in_(ids)).delete(
+            synchronize_session=False
+        )
+        db.query(models.Finding).filter(models.Finding.id.in_(ids)).delete(
+            synchronize_session=False
+        )
+
+    db.query(BuildRun).filter(BuildRun.project_id == projet.id).delete(synchronize_session=False)
+    db.query(QualityGateSetting).filter(QualityGateSetting.project_id == projet.id).delete(
+        synchronize_session=False
+    )
+    db.delete(projet)
+    db.commit()
+
+    return {"detail": "Projet supprimé.", "findings_deleted": len(ids)}
+
+
 # =============================================================================
 # FONCTIONS UTILITAIRES
 # =============================================================================

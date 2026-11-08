@@ -8,68 +8,57 @@
 # -----------------------------------------------------------------------------
 
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
 
-def _get_rules_path_for_docker() -> str:
-    """
-    Renvoie le chemin, sur VOTRE machine, vers le fichier de règles, dans un
-    format que Docker accepte pour le montage de volume (avec des "/", même
-    sous Windows).
-
-    "Path(__file__)" représente le chemin de CE fichier Python. ".parent"
-    donne son dossier. C'est une façon fiable de retrouver un fichier voisin,
-    qui fonctionne peu importe d'où le programme est lancé.
-    """
-    rules_file = Path(__file__).parent / "semgrep-rules.yaml"
-    # "resolve()" transforme en chemin absolu, ".as_posix()" force les "/"
-    # (même sous Windows), ce qui est le format attendu par Docker.
-    return rules_file.resolve().as_posix()
+# Nom du fichier de règles copié temporairement dans le dossier scanné.
+_RULES_FILENAME = ".vulnscan-semgrep-rules.yaml"
 
 
 def run_semgrep_scan(target_path: str) -> dict:
     """
     Lance Semgrep sur le dossier "target_path", via Docker, en utilisant nos
     propres règles (voir semgrep-rules.yaml), sans dépendre d'internet.
+
+    Le fichier de règles est copié dans le dossier scanné (comme le rapport de
+    Gitleaks), puis supprimé. Ainsi un seul montage suffit, et cela fonctionne
+    aussi quand l'API tourne dans un conteneur Docker : le chemin du fichier de
+    règles vu par l'API n'existerait pas sur la machine qui exécute Docker.
     """
-    rules_path = _get_rules_path_for_docker()
+    rules_in_target = os.path.join(target_path, _RULES_FILENAME)
+    shutil.copyfile(Path(__file__).parent / "semgrep-rules.yaml", rules_in_target)
 
     command = [
         "docker", "run", "--rm",
         "-v", f"{target_path}:/src",
-        "-v", f"{rules_path}:/rules.yaml",  # on "monte" aussi notre fichier de règles
         "semgrep/semgrep",
         "semgrep", "scan",
-        "--config", "/rules.yaml",
+        "--config", f"/src/{_RULES_FILENAME}",
         "--json",
         "--quiet",
+        "--exclude", _RULES_FILENAME,
         "--exclude", "venv",
         "--exclude", "node_modules",
         "--exclude", "__pycache__",
         "/src",
     ]
 
-    result = subprocess.run(
-        command,
-        capture_output=True,
-        text=True,
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+        )
+    finally:
+        if os.path.exists(rules_in_target):
+            os.remove(rules_in_target)
 
-        # CORRECTIF : lire la sortie en UTF-8 (voir trivy.py). Sans ça, sous
-        # Windows, un caractère accentué ou typographique peut faire échouer
-        # la lecture et result.stdout vaut None.
-        encoding="utf-8",
-        errors="replace",
-
-        # 300 s au lieu de 120 s : le premier démarrage du conteneur peut
-        # être plus lent.
-        timeout=300,
-    )
-
-    # Contrairement à Trivy, Semgrep renvoie un code différent de 0 quand il
-    # TROUVE des problèmes de sécurité (ce n'est pas un échec de l'outil,
-    # c'est le résultat attendu !). On ne vérifie donc pas returncode ici,
-    # sauf si la sortie est franchement vide, signe d'un vrai plantage.
     if not result.stdout:
         raise RuntimeError(f"Semgrep n'a rien renvoyé : {result.stderr}")
 
@@ -82,8 +71,6 @@ def run_semgrep_scan(target_path: str) -> dict:
         ) from exc
 
 
-# Semgrep utilise ses propres niveaux (ERROR, WARNING, INFO), différents de
-# ceux de Trivy. On fait la correspondance vers nos niveaux à nous.
 _SEVERITY_MAP = {
     "ERROR": "high",
     "WARNING": "medium",
